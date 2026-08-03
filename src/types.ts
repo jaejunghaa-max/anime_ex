@@ -121,6 +121,7 @@ export interface SignupRow {
   wrote: number;
   last_edited: number | null;
   char_count: number;
+  score: number | null; // participant's /10 rating of their given anime
   created_at: number;
   updated_at: number;
 }

@@ -14,9 +14,9 @@ import * as su from './signup';
 // Actions any member may use; everything else under ax:/axm: is manager-only (§13.2).
 const PARTICIPANT_ACTIONS = new Set([
   'signup', 'signup_pick', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart',
-  'edit_signup', 'withdraw', 'cancel',
+  'edit_signup', 'withdraw', 'score', 'cancel',
 ]);
-const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b']);
+const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score']);
 
 export async function routeInteraction(
   env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction,
@@ -75,6 +75,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       case 'launch': return mgr.launchSubmit(c);
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
+      case 'score': return su.scoreSubmit(c);
       default: return stale(c, 'This form is from an older version.');
     }
   }
@@ -124,6 +125,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_confirm': return su.signupConfirm(c);
+    case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
     default:
       return stale(c, 'This control is from an older version of the panel.');

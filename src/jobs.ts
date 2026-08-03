@@ -6,8 +6,8 @@
 
 import type { Cfg, Env, EventRow, FormItem, GuildRow, JobRow, SignupRow } from './types';
 import {
-  addThreadMember, createPrivateThread, deleteChannel, DiscordApiError, embed, linkBtn,
-  postMessage, row,
+  addThreadMember, btn, createPrivateThread, deleteChannel, DiscordApiError, embed, linkBtn,
+  postMessage, row, Style,
 } from './discord';
 import { answersOf, getItems, orderedSignups, transition } from './db';
 import {
@@ -15,7 +15,7 @@ import {
   GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
 import { repaintPanels } from './panels';
-import { writeReviewLinks, writeSyncCells, wroteCell } from './sheet';
+import { lengthCell, scoreCell, writeReviewLinks, writeStatusCells } from './sheet';
 import { buildLoops, chunkLines, epochToZoned, now, truncate, ts } from './util';
 
 const WROTE_GRACE_S = 60;
@@ -112,7 +112,10 @@ function assignmentCard(
           (visibleLines ? `\n\nWhat they shared with you:\n${visibleLines}` : ''),
       }),
     ],
-    components: me.doc_url ? [row(linkBtn(me.doc_url, '📝 Open your review doc'))] : [],
+    components: [row(...[
+      me.doc_url ? linkBtn(me.doc_url, '📝 Open your review doc') : null,
+      btn('ax:score', '⭐ Score it /10', Style.PRIMARY),
+    ].filter(Boolean) as unknown[])],
   };
 }
 
@@ -194,6 +197,7 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 
 function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Record<string, unknown> {
   const reviewTitle = `Review of ${me.anime_title} by ${recipient.display_name}`;
+  const scored = recipient.score !== null ? ` and scored it **⭐ ${recipient.score}/10**` : '';
   return {
     content: `<@${me.user_id}> the reveal is here! 🎭`,
     embeds: [embed({
@@ -202,7 +206,7 @@ function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Reco
         `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>) — ` +
         `they recommended **${santa.anime_title}** for you.\n\n` +
         `**${recipient.display_name}** (<@${recipient.user_id}>) reviewed your recommendation ` +
-        `**${me.anime_title}**${recipient.doc_url ? ':' : ' — but their review doc is missing.'}`,
+        `**${me.anime_title}**${scored}${recipient.doc_url ? ':' : ' — but their review doc is missing.'}`,
     })],
     components: recipient.doc_url ? [row(linkBtn(recipient.doc_url, `📖 ${truncate(reviewTitle, 70)}`))] : [],
   };
@@ -220,7 +224,8 @@ async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: Sign
       const s = all[i]!;
       const recipient = all[loops.recipient[i]!]!;
       const link = recipient.doc_url ? ` ([review](${recipient.doc_url}))` : '';
-      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → reviewed by <@${recipient.user_id}>${link}`);
+      const scored = recipient.score !== null ? ` · ⭐ ${recipient.score}/10` : '';
+      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → reviewed by <@${recipient.user_id}>${link}${scored}`);
     }
   }
   // ≤10 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
@@ -330,7 +335,7 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
 
   const items = await getItems(env, event.event_id);
   const stmts: D1PreparedStatement[] = [];
-  const cells: Array<{ rowIndex: number; edited: string; chars: number | string; wrote: string }> = [];
+  const cells: Array<{ rowIndex: number; length: number | string; score: number | string }> = [];
   let wroteChanged = false;
 
   for (const s of pending.results) {
@@ -343,7 +348,7 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
         stmts.push(env.DB.prepare(
           'UPDATE signups SET doc_missing = 1, wrote = 0, synced_at = ?1, updated_at = ?1 WHERE signup_id = ?2',
         ).bind(now(), s.signup_id));
-        cells.push({ rowIndex: s.row_order ?? 0, edited: '', chars: '', wrote: '❌ (missing)' });
+        cells.push({ rowIndex: s.row_order ?? 0, length: lengthCell({ ...s, doc_missing: 1 }), score: scoreCell(s) });
         wroteChanged = wroteChanged || s.wrote === 1;
         continue;
       }
@@ -361,6 +366,8 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
 
     const text = await driveExportText(env, guild, s.doc_id!);
     const chars = Math.max(0, text.length - s.template_chars);
+    // wrote stays internal (drives reminders + the progress panel) even
+    // though it no longer has a sheet column.
     const wrote = mtime !== null && ctime !== null && mtime > ctime + WROTE_GRACE_S && chars >= WROTE_MIN_CHARS ? 1 : 0;
     if (wrote !== s.wrote) wroteChanged = true;
     stmts.push(env.DB.prepare(
@@ -368,14 +375,13 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
     ).bind(mtime, chars, wrote, now(), s.signup_id));
     cells.push({
       rowIndex: s.row_order ?? 0,
-      edited: mtime !== null ? epochToZoned(mtime, event.tz ?? 'UTC') : '',
-      chars,
-      wrote: wroteCell({ ...s, wrote, doc_missing: 0 }),
+      length: lengthCell({ ...s, char_count: chars, doc_missing: 0 }),
+      score: scoreCell(s),
     });
   }
 
   await env.DB.batch(stmts);
-  await writeSyncCells(env, guild, event, items, cells).catch((e) => {
+  await writeStatusCells(env, guild, event, items, cells).catch((e) => {
     console.error('sync cells write failed (non-fatal)', e);
   });
 

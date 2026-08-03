@@ -675,10 +675,10 @@ export async function viewEvent(c: HCtx): Promise<Response> {
   if (!e) return stale(c);
   const rows = await orderedSignups(c.env, e.event_id);
   const lines = rows.map((s) => {
-    if (s.doc_missing) return `<@${s.user_id}> — ⚠ review doc missing`;
-    if (!s.wrote) return `<@${s.user_id}> — ❌ not started`;
-    const edited = s.last_edited ? `, edited ${ts(s.last_edited, 'R')}` : '';
-    return `<@${s.user_id}> — ✍ ${s.char_count.toLocaleString('en-US')} chars${edited}`;
+    const scored = s.score !== null ? ` · ⭐ ${s.score}/10` : '';
+    if (s.doc_missing) return `<@${s.user_id}> — ⚠ review doc missing${scored}`;
+    if (!s.wrote) return `<@${s.user_id}> — ❌ not started${scored}`;
+    return `<@${s.user_id}> — ✍ ${s.char_count.toLocaleString('en-US')} chars${scored}`;
   });
   // One ephemeral message; total embed characters are capped at 6000 by
   // Discord, so overflow is summarized and lives in the sheet.

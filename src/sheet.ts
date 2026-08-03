@@ -8,7 +8,7 @@ import {
   SHEET_TAB, addHeaderNotes, valuesBatchUpdate, valuesClear, valuesGet, valuesUpdate,
 } from './google';
 import { answersOf } from './db';
-import { buildLoops, epochToZoned, type LoopMap } from './util';
+import { buildLoops, type LoopMap } from './util';
 
 /** 1-indexed column number → A1 letter(s). */
 export function colLetter(n: number): string {
@@ -30,9 +30,8 @@ export interface Layout {
   santaCol: number;
   givenCol: number;
   linkCol: number;
-  editedCol: number;
-  charsCol: number;
-  wroteCol: number;
+  lengthCol: number;
+  scoreCol: number;
   lastCol: number;
 }
 
@@ -44,10 +43,9 @@ export function layoutOf(items: FormItem[]): Layout {
     santaCol: FIXED + k + 2,
     givenCol: FIXED + k + 3,
     linkCol: FIXED + k + 4,
-    editedCol: FIXED + k + 5,
-    charsCol: FIXED + k + 6,
-    wroteCol: FIXED + k + 7,
-    lastCol: FIXED + k + 7,
+    lengthCol: FIXED + k + 5, // "Review Length" — body chars minus template
+    scoreCol: FIXED + k + 6,  // participant's /10 score of their given anime
+    lastCol: FIXED + k + 6,
   };
 }
 
@@ -55,7 +53,7 @@ export function headerRow(items: FormItem[]): string[] {
   return [
     'Row #', 'User ID 🔑', 'Username', 'Anime', 'MAL',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Group', 'Secret Santa', 'Given Anime', 'Review Link', 'Last Edited', 'Chars', 'Wrote',
+    'Group', 'Secret Santa', 'Given Anime', 'Review Link', 'Review Length', 'Score',
   ];
 }
 
@@ -63,13 +61,18 @@ export function animeCell(s: SignupRow): string {
   return s.anime_year ? `${s.anime_title} (${s.anime_year})` : s.anime_title;
 }
 
-export function wroteCell(s: SignupRow): string {
-  if (s.doc_missing) return '❌ (missing)';
-  return s.wrote ? '✅' : '❌';
+/** Review Length cell: chars written beyond the template; flags deleted docs. */
+export function lengthCell(s: Pick<SignupRow, 'doc_id' | 'doc_missing' | 'char_count'>): string | number {
+  if (s.doc_missing) return '⚠ missing';
+  return s.doc_id ? s.char_count : '';
+}
+
+export function scoreCell(s: Pick<SignupRow, 'score'>): string | number {
+  return s.score ?? '';
 }
 
 function dataRow(
-  s: SignupRow, idx: number, santa: SignupRow | undefined, items: FormItem[], event: EventRow,
+  s: SignupRow, idx: number, santa: SignupRow | undefined, items: FormItem[],
 ): unknown[] {
   const answers = answersOf(s);
   return [
@@ -83,17 +86,18 @@ function dataRow(
     santa ? santa.display_name : '',
     santa ? animeCell(santa) : '',
     s.doc_url ?? '',
-    s.last_edited ? epochToZoned(s.last_edited, event.tz ?? 'UTC') : '',
-    s.doc_id ? s.char_count : '',
-    s.doc_id ? wroteCell(s) : '',
+    lengthCell(s),
+    scoreCell(s),
   ];
 }
 
 /**
- * Clear + rewrite the whole data block from D1 (idempotent, used by signup
- * upsert/withdraw, Shuffle, Grouping, Validate, restore). Derived columns are
- * filled per group once the loop order has been adopted (row_order non-NULL);
- * the Group cell always reflects D1's adopted membership.
+ * Clear + rewrite the header and data block from D1 (idempotent, used by
+ * signup upsert/withdraw, Shuffle, Grouping, Validate, restore). Including
+ * the header row makes layout changes self-heal on sheets created by older
+ * deployments; the clear range sweeps a few extra columns for the same
+ * reason. Derived columns fill per group once the loop order has been
+ * adopted (row_order non-NULL).
  */
 export async function rewriteSheet(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], ordered: SignupRow[],
@@ -103,11 +107,12 @@ export async function rewriteSheet(
   const derived = ordered.length >= 2 && ordered.every((s) => s.row_order !== null);
   const loops: LoopMap | null = derived ? buildLoops(ordered.map((s) => s.group_no)) : null;
   const end = colLetter(layout.lastCol);
-  await valuesClear(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}1000`);
-  if (ordered.length === 0) return;
-  const values = ordered.map((s, i) =>
-    dataRow(s, i, loops ? ordered[loops.santa[i]!] : undefined, items, event));
-  await valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}${ordered.length + 1}`, values);
+  await valuesClear(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${colLetter(layout.lastCol + 3)}1000`);
+  const values = [
+    headerRow(items),
+    ...ordered.map((s, i) => dataRow(s, i, loops ? ordered[loops.santa[i]!] : undefined, items)),
+  ];
+  await valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!A1:${end}${ordered.length + 1}`, values);
 }
 
 export async function writeHeader(
@@ -155,17 +160,26 @@ export function writeReviewLinks(
   })));
 }
 
-/** Batched per-tick cell writes: Last Edited / Chars / Wrote during sync (§8.5). */
-export function writeSyncCells(
+/** Batched per-tick cell writes: Review Length + Score during sync (§8.5). */
+export function writeStatusCells(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
-  rows: Array<{ rowIndex: number; edited: string; chars: number | string; wrote: string }>,
+  rows: Array<{ rowIndex: number; length: number | string; score: number | string }>,
 ): Promise<unknown> {
   if (!event.sheet_id || rows.length === 0) return Promise.resolve();
   const layout = layoutOf(items);
-  const from = colLetter(layout.editedCol);
-  const to = colLetter(layout.wroteCol);
+  const from = colLetter(layout.lengthCol);
+  const to = colLetter(layout.scoreCol);
   return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
     range: `${SHEET_TAB}!${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`,
-    values: [[r.edited, r.chars, r.wrote]],
+    values: [[r.length, r.score]],
   })));
+}
+
+/** Single-cell Score write when a participant submits their /10 rating. */
+export function writeScoreCell(
+  env: Env, guild: GuildRow, event: EventRow, items: FormItem[], rowIndex: number, score: number,
+): Promise<unknown> {
+  if (!event.sheet_id) return Promise.resolve();
+  const col = colLetter(layoutOf(items).scoreCol);
+  return valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!${col}${rowIndex + 2}`, [[score]]);
 }

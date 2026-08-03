@@ -161,7 +161,10 @@ describe('sheet layout (§8.3)', () => {
     const layout = layoutOf(items);
     expect(h[layout.groupCol - 1]).toBe('Group');       // manager-editable (rev. 3)
     expect(h[layout.santaCol - 1]).toBe('Secret Santa');
-    expect(h[layout.wroteCol - 1]).toBe('Wrote');
+    expect(h[layout.lengthCol - 1]).toBe('Review Length'); // renamed from Chars; Last Edited/Wrote dropped
+    expect(h[layout.scoreCol - 1]).toBe('Score');
+    expect(h).not.toContain('Wrote');
+    expect(h).not.toContain('Last Edited');
     expect(layout.groupCol).toBe(8);     // A-E fixed + 2 items + Group
     expect(h).toHaveLength(layout.lastCol);
   });

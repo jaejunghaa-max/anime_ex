@@ -21,7 +21,13 @@ export interface AnimeCandidate {
 }
 
 const CACHE_TTL = 24 * 3600;
+const DEGRADED_TTL = 3600; // shorter cache for AniList-only results (Jikan was down)
 const SCORE_MIN = 25;
+
+// api.jikan.moe sits behind Cloudflare bot protection: requests with no
+// User-Agent (the Workers fetch default) get 403'd, which surfaced as a
+// permanent "search unavailable". Always identify ourselves.
+const USER_AGENT = 'AnimeExchangeBot/2.0 (Cloudflare Workers; +https://github.com/jaejunghaa-max/anime_ex)';
 
 // ------------------------------------------------------------ normalization
 
@@ -123,9 +129,14 @@ function fromJikan(a: JikanAnime): AnimeCandidate {
 async function jikanSearch(q: string, sfw: boolean): Promise<AnimeCandidate[]> {
   const url = `https://api.jikan.moe/v4/anime?q=${encodeURIComponent(q)}&limit=20${sfw ? '&sfw=true' : ''}`;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if ((res.status === 429 || res.status >= 500) && attempt < 1) {
-      await sleep(900); // one retry with backoff (§9.1)
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+    });
+    // 403 = bot-protection challenge, 429 = the per-IP limit (shared by all
+    // Workers egress traffic) — both are worth one backed-off retry before
+    // failing over to AniList.
+    if ((res.status === 403 || res.status === 429 || res.status >= 500) && attempt < 2) {
+      await sleep(800 * (attempt + 1));
       continue;
     }
     if (!res.ok) throw new Error(`Jikan ${res.status}`);
@@ -150,7 +161,7 @@ const ANILIST_QUERY = `query ($q: String) {
 async function anilistSearch(q: string): Promise<AnimeCandidate[]> {
   const res = await fetch('https://graphql.anilist.co', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT },
     body: JSON.stringify({ query: ANILIST_QUERY, variables: { q } }),
   });
   if (!res.ok) return [];
@@ -184,7 +195,13 @@ async function anilistSearch(q: string): Promise<AnimeCandidate[]> {
 
 // -------------------------------------------------------------------- entry
 
-/** Full pipeline (§9.1): normalize → cache → Jikan → re-rank → (AniList merge) → top 10. */
+/**
+ * Full pipeline (§9.1): normalize → cache → Jikan → re-rank → AniList merge →
+ * top 10. AniList steps in for thin CJK results (§9.4) and as a full failover
+ * whenever Jikan is unreachable (403/429/5xx after retries) — its entries
+ * still resolve to MAL ids, so the "MAL DB" requirement holds. Only when both
+ * sources fail does this throw (→ "Search is temporarily unavailable").
+ */
 export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise<AnimeCandidate[]> {
   const { norm, cjk } = normalizeQuery(rawQuery);
   if (!norm) return [];
@@ -195,10 +212,19 @@ export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise
     .bind(qhash, now() - CACHE_TTL).first<{ results_json: string }>();
   if (cached) return JSON.parse(cached.results_json) as AnimeCandidate[];
 
-  let ranked = rankCandidates(norm, cjk, await jikanSearch(norm, cfg.sfwOnly));
+  let jikan: AnimeCandidate[] | null = null;
+  try {
+    jikan = await jikanSearch(norm, cfg.sfwOnly);
+  } catch (e) {
+    console.error('Jikan search failed, trying AniList failover', e);
+  }
+  let ranked = jikan ? rankCandidates(norm, cjk, jikan) : [];
 
-  if (cfg.anilistFallback && cjk && ranked.length < 3) {
-    const extra = await anilistSearch(norm).catch(() => []);
+  if (cfg.anilistFallback && (jikan === null || (cjk && ranked.length < 3))) {
+    const extra = await anilistSearch(norm).catch((e) => {
+      console.error('AniList search failed', e);
+      return [] as AnimeCandidate[];
+    });
     if (extra.length) {
       const seen = new Set(ranked.map((c) => c.mal_id));
       const merged = [...ranked, ...rankCandidates(norm, cjk, extra).filter((c) => !seen.has(c.mal_id))];
@@ -206,8 +232,13 @@ export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise
     }
   }
 
+  if (jikan === null && ranked.length === 0) throw new Error('all anime search sources failed');
+
+  // Degraded (AniList-only) results get a shorter effective TTL by aging the
+  // cache row, so a Jikan recovery improves this query within the hour.
+  const fetchedAt = jikan === null ? now() - (CACHE_TTL - DEGRADED_TTL) : now();
   await env.DB
     .prepare('INSERT OR REPLACE INTO mal_cache (qhash, results_json, fetched_at) VALUES (?1, ?2, ?3)')
-    .bind(qhash, JSON.stringify(ranked), now()).run();
+    .bind(qhash, JSON.stringify(ranked), fetchedAt).run();
   return ranked;
 }

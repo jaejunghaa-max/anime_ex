@@ -119,11 +119,16 @@ Everything happens on the two pinned panels:
      and adopts order + membership into D1.
 4. Launch runs as a batched job: per participant a review doc
    (`Review of {Anime} by {name}`, anyone-with-link **editor**), a private
-   thread `🎁 {name}`, and an assignment card with the doc link. The panel
-   counts up (~n/`JOB_BATCH` minutes) and flips to RUNNING by itself.
-5. During RUNNING: hourly "wrote" detection (modifiedTime + char count vs the
-   doc template), progress panel, scheduled reminders (thread ping, optional DM
-   mirror), **Remind Now** for laggards.
+   thread `🎁 {name}`, and an assignment card with the doc link plus a
+   **⭐ Score it /10** button. The panel counts up (~n/`JOB_BATCH` minutes)
+   and flips to RUNNING by itself.
+5. During RUNNING: hourly wrote-detection (modifiedTime + char count vs the
+   doc template — internal; the sheet shows a **Review Length** column),
+   progress panel, scheduled reminders (thread ping, optional DM mirror),
+   **Remind Now** for laggards. Participants can score their given anime out
+   of 10 any time until Close (re-scoring allowed); scores land in the
+   sheet's **Score** column and appear on reveal cards, the gallery and
+   View Event.
 6. **Close Reviews** (with or without a public gallery): final status sync, all
    docs flip to anyone-with-link **viewer** *before* any reveal link is posted,
    then reveal cards (+ optional gallery with one section per loop — single-loop
@@ -161,7 +166,7 @@ Everything happens on the two pinned panels:
 | Private threads without boosts; `Manage Threads` visibility caveat | Yes (documented above) |
 | `drive.file` scope for Sheets/Docs/Drive calls on app-created files | Yes — creation + all follow-up calls are on app-created files; the connected email comes from `drive/v3/about` (no extra scope) |
 | Free plan: 10 ms CPU, 50 subrequests, 1-min cron; D1 ops may count | Designed with headroom (`JOB_BATCH=5`); tune upward on paid |
-| Jikan v4 availability (~3 req/s) | One retry + 24 h D1 cache; AniList fallback for native-script queries |
+| Jikan v4 availability (~3 req/s) | Descriptive `User-Agent` (api.jikan.moe's bot protection 403s UA-less Workers fetches), backed-off retries, 24 h D1 cache; AniList failover for native-script queries **and** whenever Jikan is unreachable (results still resolve to MAL ids) |
 
 ## Development
 
