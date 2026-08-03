@@ -22,7 +22,6 @@ MAX_PARTICIPANTS = "100"
 # with headroom. On the paid plan, raise it freely.
 JOB_BATCH = "5"
 REMINDERS_PER_TICK = "30"
-ANILIST_FALLBACK = "true"
 SFW_ONLY = "true"
 # STRONGLY RECOMMENDED for reliable search: an official MAL API v2 client id.
 # Jikan and AniList both sit behind Cloudflare bot protection that routinely

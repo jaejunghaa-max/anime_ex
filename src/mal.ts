@@ -1,15 +1,17 @@
 // MAL search (spec §9): keyword search re-ranked client-side across all title
-// variants, 24 h D1 cache. Three sources, tried in order:
+// variants, 24 h D1 cache. Two sources, tried in order:
 //
 //   1. Official MAL API v2 (api.myanimelist.net, X-MAL-CLIENT-ID) — primary
 //      when MAL_CLIENT_ID is set. Authenticated and meant for server-side
-//      use, so it is not subject to the anti-bot walls below.
-//   2. Jikan v4 — the spec's unauthenticated source. Both api.jikan.moe and
-//      graphql.anilist.co sit behind Cloudflare bot protection that
-//      routinely 403-challenges Workers egress traffic (shared datacenter
-//      IPs), which no header can talk around — hence source #1.
-//   3. AniList GraphQL — augments thin CJK results (§9.4) and is the last
-//      resort when the sources above fail; entries resolve to MAL ids.
+//      use, so it is not subject to the anti-bot wall below. Effectively
+//      required on Workers.
+//   2. Jikan v4 — the spec's unauthenticated source; api.jikan.moe sits
+//      behind Cloudflare bot protection that routinely 403-challenges
+//      Workers egress traffic (shared datacenter IPs), which no header can
+//      talk around — hence source #1.
+//
+// The spec's optional AniList fallback (§9.4) was removed: graphql.anilist.co
+// blocks Cloudflare Workers traffic the same way, so it never helped here.
 //
 // The scoring functions are pure and exported for unit tests.
 
@@ -32,7 +34,6 @@ export interface AnimeCandidate {
 }
 
 const CACHE_TTL = 24 * 3600;
-const DEGRADED_TTL = 3600; // shorter cache for AniList-only results (Jikan was down)
 const SCORE_MIN = 25;
 
 // api.jikan.moe sits behind Cloudflare bot protection: requests with no
@@ -196,8 +197,7 @@ async function jikanSearch(q: string, sfw: boolean): Promise<AnimeCandidate[]> {
       headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
     });
     // 403 = bot-protection challenge, 429 = the per-IP limit (shared by all
-    // Workers egress traffic) — both are worth one backed-off retry before
-    // failing over to AniList.
+    // Workers egress traffic) — both are worth one backed-off retry.
     if ((res.status === 403 || res.status === 429 || res.status >= 500) && attempt < 2) {
       await sleep(800 * (attempt + 1));
       continue;
@@ -208,64 +208,15 @@ async function jikanSearch(q: string, sfw: boolean): Promise<AnimeCandidate[]> {
   }
 }
 
-// ---------------------------------------------------------- AniList fallback
-
-const ANILIST_QUERY = `query ($q: String) {
-  Page(perPage: 10) {
-    media(search: $q, type: ANIME) {
-      idMal format episodes siteUrl
-      startDate { year }
-      coverImage { large }
-      title { romaji english native }
-    }
-  }
-}`;
-
-async function anilistSearch(q: string): Promise<AnimeCandidate[]> {
-  const res = await fetch('https://graphql.anilist.co', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': USER_AGENT },
-    body: JSON.stringify({ query: ANILIST_QUERY, variables: { q } }),
-  });
-  if (!res.ok) return [];
-  const data = (await res.json().catch(() => null)) as {
-    data?: { Page?: { media?: Array<{
-      idMal?: number | null; format?: string | null; episodes?: number | null;
-      startDate?: { year?: number | null };
-      coverImage?: { large?: string | null };
-      title?: { romaji?: string | null; english?: string | null; native?: string | null };
-    }> } };
-  } | null;
-  const media = data?.data?.Page?.media ?? [];
-  // Only entries that resolve to a MAL id keep the "MAL DB" requirement (§9.4).
-  return media
-    .filter((m) => typeof m.idMal === 'number' && m.idMal! > 0)
-    .map((m) => ({
-      mal_id: m.idMal!,
-      title: m.title?.romaji ?? m.title?.english ?? m.title?.native ?? `MAL #${m.idMal}`,
-      title_en: m.title?.english ?? null,
-      title_jp: m.title?.native ?? null,
-      synonyms: [m.title?.romaji, m.title?.english, m.title?.native].filter((t): t is string => !!t),
-      year: m.startDate?.year ?? null,
-      type: m.format ?? null,
-      episodes: m.episodes ?? null,
-      url: `https://myanimelist.net/anime/${m.idMal}`,
-      image: m.coverImage?.large ?? null,
-      members: 0,
-      score: 0,
-    }));
-}
-
 // -------------------------------------------------------------------- entry
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Full pipeline (§9.1): normalize → cache → sources in order (official MAL →
- * Jikan → AniList) → re-rank → top 10. Every source outcome is logged so
- * `wrangler tail` shows exactly which upstream failed with what status.
- * Throws only when no source yields anything (→ "Search is temporarily
- * unavailable").
+ * Full pipeline (§9.1): normalize → cache → official MAL, then Jikan →
+ * re-rank → top 10. Every source outcome is logged so `wrangler tail` shows
+ * exactly which upstream failed with what status. Throws only when no source
+ * yields anything (→ "Search is temporarily unavailable").
  */
 export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise<AnimeCandidate[]> {
   const { norm, cjk } = normalizeQuery(rawQuery);
@@ -296,34 +247,17 @@ export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise
       attempts.push(`jikan:${errMsg(e)}`);
     }
   }
-  let ranked = primary ? rankCandidates(norm, cjk, primary) : [];
 
-  if (cfg.anilistFallback && (primary === null || (cjk && ranked.length < 3))) {
-    try {
-      const extra = await anilistSearch(norm);
-      attempts.push(`anilist:ok(${extra.length})`);
-      if (extra.length) {
-        const seen = new Set(ranked.map((c) => c.mal_id));
-        const merged = [...ranked, ...rankCandidates(norm, cjk, extra).filter((c) => !seen.has(c.mal_id))];
-        ranked = merged.sort((a, b) => b.score - a.score).slice(0, 10);
-      }
-    } catch (e) {
-      attempts.push(`anilist:${errMsg(e)}`);
-    }
-  }
-
-  if (primary === null && ranked.length === 0) {
+  if (primary === null) {
     console.error(`anime search: every source failed for "${norm}" [${attempts.join(' | ')}]`);
     throw new Error(`all search sources failed: ${attempts.join(' | ')}`);
   }
   console.log(`anime search "${norm}": ${attempts.join(' | ')}`);
 
-  // Degraded (fallback-only) results get a shorter effective TTL by aging the
-  // cache row, so a primary-source recovery improves this query within the hour.
-  const fetchedAt = primary === null ? now() - (CACHE_TTL - DEGRADED_TTL) : now();
+  const ranked = rankCandidates(norm, cjk, primary);
   await env.DB
     .prepare('INSERT OR REPLACE INTO mal_cache (qhash, results_json, fetched_at) VALUES (?1, ?2, ?3)')
-    .bind(qhash, JSON.stringify(ranked), fetchedAt).run();
+    .bind(qhash, JSON.stringify(ranked), now()).run();
   return ranked;
 }
 
@@ -346,13 +280,12 @@ export async function diagnoseSearch(cfg: Cfg, rawQuery: string): Promise<Record
   return {
     query: norm,
     cjk,
-    config: { malClientId: !!cfg.malClientId, anilistFallback: cfg.anilistFallback, sfwOnly: cfg.sfwOnly },
+    config: { malClientId: !!cfg.malClientId, sfwOnly: cfg.sfwOnly },
     sources: {
       malOfficial: cfg.malClientId
         ? await probe(() => malOfficialSearch(cfg.malClientId!, norm, cfg.sfwOnly))
         : { ok: false, error: 'MAL_CLIENT_ID not configured' },
       jikan: await probe(() => jikanSearch(norm, cfg.sfwOnly)),
-      anilist: await probe(() => anilistSearch(norm)),
     },
   };
 }

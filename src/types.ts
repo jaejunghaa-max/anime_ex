@@ -14,7 +14,6 @@ export interface Env {
   MAX_PARTICIPANTS?: string;
   JOB_BATCH?: string;
   REMINDERS_PER_TICK?: string;
-  ANILIST_FALLBACK?: string;
   SFW_ONLY?: string;
   MAL_CLIENT_ID?: string;
 }
@@ -23,7 +22,6 @@ export interface Cfg {
   maxParticipants: number;
   jobBatch: number;
   remindersPerTick: number;
-  anilistFallback: boolean;
   sfwOnly: boolean;
   /** Official MAL API v2 client id — primary search source when set. */
   malClientId: string | null;
@@ -38,7 +36,6 @@ export function cfgOf(env: Env): Cfg {
     maxParticipants: int(env.MAX_PARTICIPANTS, 100),
     jobBatch: int(env.JOB_BATCH, 5),
     remindersPerTick: int(env.REMINDERS_PER_TICK, 30),
-    anilistFallback: (env.ANILIST_FALLBACK ?? 'true') !== 'false',
     sfwOnly: (env.SFW_ONLY ?? 'true') !== 'false',
     malClientId: env.MAL_CLIENT_ID?.trim() || null,
   };
