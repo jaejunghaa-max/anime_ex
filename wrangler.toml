@@ -29,7 +29,7 @@ SFW_ONLY = "true"
 # 403s Workers egress traffic; the authenticated official API is not subject
 # to that. Get one free in ~2 minutes: https://myanimelist.net/apiconfig
 # ("Create ID", app type: other, purpose: hobbyist). Empty = Jikan/AniList only.
-MAL_CLIENT_ID = ""
+MAL_CLIENT_ID = "0b17b0153ce210443a904e98ff279a1d"
 
 [[d1_databases]]
 binding = "DB"
