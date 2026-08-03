@@ -12,7 +12,7 @@ compatibility_date = "2025-09-01"
 DISCORD_APP_ID = "1533788885727838288"
 DISCORD_PUBLIC_KEY = "8122b26bc189196dfb62735ee7453de419155ed0c719506dc3f2e15f4ab70a87"
 # Must exactly match an authorized redirect URI on the Google OAuth client:
-GOOGLE_REDIRECT_URI = "https://anime-exchange-bot.jaejunghaa.dev.workers.dev/google/oauth/callback"
+GOOGLE_REDIRECT_URI = "https://anime-exchange-bot.jaejunghaa.workers.dev/google/oauth/callback"
 MAX_PARTICIPANTS = "100"
 # Fan-out units per cron tick (spec §7.4). The spec's sample env says 6; the
 # default here is 5 because a launch unit costs ~7 external subrequests
