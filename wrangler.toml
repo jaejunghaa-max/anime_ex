@@ -23,11 +23,11 @@ MAX_PARTICIPANTS = "100"
 JOB_BATCH = "5"
 REMINDERS_PER_TICK = "30"
 SFW_ONLY = "true"
-# STRONGLY RECOMMENDED for reliable search: an official MAL API v2 client id.
-# Jikan and AniList both sit behind Cloudflare bot protection that routinely
-# 403s Workers egress traffic; the authenticated official API is not subject
-# to that. Get one free in ~2 minutes: https://myanimelist.net/apiconfig
-# ("Create ID", app type: other, purpose: hobbyist). Empty = Jikan/AniList only.
+# Effectively REQUIRED for reliable search on Workers: an official MAL API v2
+# client id. Jikan (the only fallback) sits behind Cloudflare bot protection
+# that routinely 403s Workers egress traffic; the authenticated official API
+# is not subject to that. Get one free in ~2 minutes:
+# https://myanimelist.net/apiconfig ("Create ID", app type: other).
 MAL_CLIENT_ID = "0b17b0153ce210443a904e98ff279a1d"
 
 [[d1_databases]]
