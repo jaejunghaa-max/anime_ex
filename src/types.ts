@@ -73,7 +73,7 @@ export interface EventRow {
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
-  loop_status: 'none' | 'shuffled' | 'manual';
+  loop_status: 'none' | 'shuffled' | 'manual'; // unused since rev. 3 (column kept; panel shows the loops summary instead)
   validated_at: number | null;
   count_panel_at: number;
   panel_dirty: number;
@@ -106,6 +106,7 @@ export interface SignupRow {
   anime_image: string | null;
   answers_json: string;
   row_order: number | null;
+  group_no: number;
   thread_id: string | null;
   doc_id: string | null;
   doc_url: string | null;

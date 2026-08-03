@@ -1,13 +1,14 @@
-// Sheet layout + rewrite/read helpers (spec §8.3). The sheet's row order IS
-// the loop; the derived Santa/Given block is always overwritten by the bot
-// and never read back as input (decision #6/#7).
+// Sheet layout + rewrite/read helpers (spec §8.3). The sheet's row order and
+// its manager-editable Group column ARE the assignment (rows = loop order,
+// Group = loop membership); the derived Santa/Given block is always
+// overwritten by the bot and never read back as input (decision #6/#7).
 
 import type { Env, EventRow, FormItem, GuildRow, SignupRow } from './types';
 import {
   SHEET_TAB, addHeaderNotes, valuesBatchUpdate, valuesClear, valuesGet, valuesUpdate,
 } from './google';
 import { answersOf } from './db';
-import { epochToZoned, santaIndex } from './util';
+import { buildLoops, epochToZoned, type LoopMap } from './util';
 
 /** 1-indexed column number → A1 letter(s). */
 export function colLetter(n: number): string {
@@ -25,6 +26,7 @@ const FIXED = 5; // A Row#, B User ID, C Username, D Anime, E MAL
 
 export interface Layout {
   itemCount: number;
+  groupCol: number;
   santaCol: number;
   givenCol: number;
   linkCol: number;
@@ -38,13 +40,14 @@ export function layoutOf(items: FormItem[]): Layout {
   const k = items.length;
   return {
     itemCount: k,
-    santaCol: FIXED + k + 1,
-    givenCol: FIXED + k + 2,
-    linkCol: FIXED + k + 3,
-    editedCol: FIXED + k + 4,
-    charsCol: FIXED + k + 5,
-    wroteCol: FIXED + k + 6,
-    lastCol: FIXED + k + 6,
+    groupCol: FIXED + k + 1, // manager-editable loop membership (§8.3)
+    santaCol: FIXED + k + 2,
+    givenCol: FIXED + k + 3,
+    linkCol: FIXED + k + 4,
+    editedCol: FIXED + k + 5,
+    charsCol: FIXED + k + 6,
+    wroteCol: FIXED + k + 7,
+    lastCol: FIXED + k + 7,
   };
 }
 
@@ -52,7 +55,7 @@ export function headerRow(items: FormItem[]): string[] {
   return [
     'Row #', 'User ID 🔑', 'Username', 'Anime', 'MAL',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Secret Santa', 'Given Anime', 'Review Link', 'Last Edited', 'Chars', 'Wrote',
+    'Group', 'Secret Santa', 'Given Anime', 'Review Link', 'Last Edited', 'Chars', 'Wrote',
   ];
 }
 
@@ -66,10 +69,9 @@ export function wroteCell(s: SignupRow): string {
 }
 
 function dataRow(
-  s: SignupRow, idx: number, ordered: SignupRow[], items: FormItem[], event: EventRow, derived: boolean,
+  s: SignupRow, idx: number, santa: SignupRow | undefined, items: FormItem[], event: EventRow,
 ): unknown[] {
   const answers = answersOf(s);
-  const santa = derived ? ordered[santaIndex(idx, ordered.length)] : undefined;
   return [
     idx + 1,
     s.user_id, // RAW valueInputOption keeps the 18-digit id a string (precision!)
@@ -77,6 +79,7 @@ function dataRow(
     animeCell(s),
     s.anime_url,
     ...items.map((it) => answers[String(it.item_id)] ?? ''),
+    s.group_no,
     santa ? santa.display_name : '',
     santa ? animeCell(santa) : '',
     s.doc_url ?? '',
@@ -88,8 +91,9 @@ function dataRow(
 
 /**
  * Clear + rewrite the whole data block from D1 (idempotent, used by signup
- * upsert/withdraw, Shuffle, Validate, restore). Derived columns are filled
- * once the loop order has been adopted (row_order non-NULL).
+ * upsert/withdraw, Shuffle, Grouping, Validate, restore). Derived columns are
+ * filled per group once the loop order has been adopted (row_order non-NULL);
+ * the Group cell always reflects D1's adopted membership.
  */
 export async function rewriteSheet(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], ordered: SignupRow[],
@@ -97,10 +101,12 @@ export async function rewriteSheet(
   if (!event.sheet_id) return;
   const layout = layoutOf(items);
   const derived = ordered.length >= 2 && ordered.every((s) => s.row_order !== null);
+  const loops: LoopMap | null = derived ? buildLoops(ordered.map((s) => s.group_no)) : null;
   const end = colLetter(layout.lastCol);
   await valuesClear(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}1000`);
   if (ordered.length === 0) return;
-  const values = ordered.map((s, i) => dataRow(s, i, ordered, items, event, derived));
+  const values = ordered.map((s, i) =>
+    dataRow(s, i, loops ? ordered[loops.santa[i]!] : undefined, items, event));
   await valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}${ordered.length + 1}`, values);
 }
 
@@ -116,8 +122,12 @@ export async function writeHeader(
     await addHeaderNotes(env, guild, event.sheet_id, event.sheet_gid, [
       { colIndex: 1, note: 'Immutable key — do not edit this column.' },
       {
+        colIndex: layout.groupCol - 1,
+        note: 'Loop membership — positive integer, blank = 1. Edit to move someone between loops; rows re-sort into contiguous group blocks on Validate.',
+      },
+      {
         colIndex: layout.santaCol - 1,
-        note: 'Auto-derived from row order — reorder rows to change assignments; this block is overwritten on every Validate/Shuffle/Launch.',
+        note: 'Auto-derived: the next row within the group. Reorder rows / edit Group to change assignments; this block is overwritten on every Shuffle/Grouping/Validate/Launch.',
       },
     ]).catch(() => { /* cosmetic */ });
   }

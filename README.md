@@ -2,10 +2,12 @@
 
 A Discord bot that runs an **Anime Exchange**: every participant submits one anime
 recommendation, receives another participant's pick at random, watches the full
-season, and writes a review in a Google Doc by a deadline. Assignments form a
-single circular loop; the recommender's identity stays secret until the reveal.
+season, and writes a review in a Google Doc by a deadline. Assignments form
+circular loops — one big loop over everyone by default, or several smaller
+loops if the manager splits participants into **groups**. The recommender's
+identity stays secret until the reveal.
 
-Implements **[Specification v2](.)** — one event per guild, all state in
+Implements **[Specification v2, rev. 3](.)** — one event per guild, all state in
 Cloudflare **D1**, all Google artifacts in the **manager's own Drive** (OAuth,
 `drive.file` scope only), designed to fit the **Workers Free plan** budget.
 
@@ -29,7 +31,7 @@ src/
   jobs.ts       batched launch / close / sync / finish engine
   handlers/     router, /setup, manager panel, signup wizard
   panels.ts     pure render(state) → panel payloads for both pinned panels
-  validate.ts   sheet↔D1 reconciliation; row order = the loop
+  validate.ts   sheet↔D1 reconciliation; row order + Group column = the loops
   sheet.ts      sheet layout; derived Santa/Given block (never read as input)
   google.ts     OAuth token cache + Drive/Sheets/Docs REST
   mal.ts        Jikan search + EN/JP re-ranking + 24 h cache (+ AniList fallback)
@@ -101,9 +103,20 @@ Everything happens on the two pinned panels:
    (English and Japanese queries both re-ranked across all title variants) →
    optional second modal (items 5–9) → confirm. Edit/withdraw any time while
    sign-ups are open.
-3. **Stop Sign-Ups** → **Shuffle** and/or hand-reorder rows in the sheet (row
-   order *is* the loop: your santa is simply the next row; the Santa/Given
-   columns are always derived, never read) → **Validate** → **Launch**.
+3. **Stop Sign-Ups** → arrange the loops → **Validate** → **Launch**.
+   - **🧩 Grouping** splits everyone into G random loops of near-equal size
+     (G ≤ ⌊n/2⌋; G = 1 is the classic single loop). Re-roll freely.
+   - **🔀 Shuffle** re-draws the order *within each group independently*,
+     preserving membership — randomize assignments after hand-curating groups.
+   - **Manual control = two sheet levers**: reorder rows (loop order) and edit
+     the **Group** column (loop membership; blank = 1). Your santa is simply
+     the next row *within your group's block*; the Santa/Given columns are
+     always derived, never read.
+   - **Validate** parses the Group column (positive integers, normalized to
+     1..G by first appearance), blocks on any 1-member group
+     (self-assignment), warns on 2-member groups (mutual pair — intentional
+     gift-swap mode is fine), then re-sorts rows into contiguous group blocks
+     and adopts order + membership into D1.
 4. Launch runs as a batched job: per participant a review doc
    (`Review of {Anime} by {name}`, anyone-with-link **editor**), a private
    thread `🎁 {name}`, and an assignment card with the doc link. The panel
@@ -113,7 +126,8 @@ Everything happens on the two pinned panels:
    mirror), **Remind Now** for laggards.
 6. **Close Reviews** (with or without a public gallery): final status sync, all
    docs flip to anyone-with-link **viewer** *before* any reveal link is posted,
-   then reveal cards (+ optional gallery of the whole loop).
+   then reveal cards (+ optional gallery with one section per loop — single-loop
+   events get one untitled section).
 7. **Finish**: deletes threads and the bot's event data. **The sheet and docs
    stay in the manager's Drive** — nothing to export.
 

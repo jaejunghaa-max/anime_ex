@@ -13,7 +13,8 @@ import { createSpreadsheet, isConnected, sheetUrl } from '../google';
 import { rewriteSheet, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
 import {
-  chunkLines, epochToZoned, isValidTz, now, parseReminderDays, randomHex, shuffled, ts, zonedToEpoch,
+  chunkLines, dealSizes, epochToZoned, isValidTz, now, parseReminderDays, randomHex, shuffled, ts,
+  zonedToEpoch,
 } from '../util';
 import { bg, HCtx, repaint, stale } from './common';
 
@@ -409,6 +410,12 @@ export async function reopenSignupsGo(c: HCtx): Promise<Response> {
   return respond.deferUpdate();
 }
 
+/**
+ * Shuffle (§5.4, rev. 3): re-draw the order **within each group
+ * independently**, preserving membership — with everyone in group 1 this is
+ * exactly the classic single-loop shuffle. Blocks concatenate in ascending
+ * group order (§7.1).
+ */
 export async function shuffle(c: HCtx): Promise<Response> {
   const e = needState(c, 'MATCHING');
   if (!e) return stale(c);
@@ -418,19 +425,85 @@ export async function shuffle(c: HCtx): Promise<Response> {
       await editOriginal(c.env, c.i.token, { content: `⚠ Need at least 2 participants to shuffle (currently ${ordered.length}).` });
       return;
     }
-    // Fisher–Yates once — a circular order is automatically one n-cycle (§7.1).
-    const order = shuffled(ordered);
-    await dbBatchChunked(c.env, [
-      ...order.map((s, idx) =>
-        c.env.DB.prepare('UPDATE signups SET row_order = ?1, updated_at = ?2 WHERE signup_id = ?3')
-          .bind(idx, now(), s.signup_id)),
-      c.env.DB.prepare("UPDATE events SET loop_status = 'shuffled', updated_at = ?1 WHERE event_id = ?2")
-        .bind(now(), e.event_id),
-    ]);
+    const byGroup = new Map<number, typeof ordered>();
+    for (const s of ordered) {
+      const list = byGroup.get(s.group_no);
+      if (list) list.push(s);
+      else byGroup.set(s.group_no, [s]);
+    }
+    const order: typeof ordered = [];
+    for (const g of [...byGroup.keys()].sort((a, b) => a - b)) {
+      order.push(...shuffled(byGroup.get(g)!));
+    }
+    await dbBatchChunked(c.env, order.map((s, idx) =>
+      c.env.DB.prepare('UPDATE signups SET row_order = ?1, updated_at = ?2 WHERE signup_id = ?3')
+        .bind(idx, now(), s.signup_id)));
     const items = await getItems(c.env, e.event_id);
     await rewriteSheet(c.env, c.guild, e, items, order.map((s, idx) => ({ ...s, row_order: idx })));
     await repaint(c);
-    await editOriginal(c.env, c.i.token, { content: `🔀 Shuffled **${order.length}** participants into one loop.` });
+    const g = byGroup.size;
+    await editOriginal(c.env, c.i.token, {
+      content: `🔀 Shuffled — **${g}** loop${g > 1 ? 's' : ''} re-drawn within existing groups.`,
+    });
+  });
+  return respond.deferEphemeral();
+}
+
+/**
+ * Grouping (§5.4, rev. 3): Fisher–Yates the full list, deal into G blocks as
+ * evenly as possible, adopt membership + order. G = 1 reproduces the single
+ * loop. Like Shuffle, no confirm — re-rolling is always possible.
+ */
+export function groupingModal(c: HCtx): Response {
+  const e = needState(c, 'MATCHING');
+  if (!e) return stale(c);
+  return respond.modal('axm:grouping', 'Split into groups', [
+    modalText('groups', 'Number of groups', {
+      max: 3, placeholder: 'e.g. 2 — each loop needs ≥ 2 members',
+      description: '1 = one big loop; max is half the participant count',
+    }),
+  ]);
+}
+
+export async function groupingSubmit(c: HCtx): Promise<Response> {
+  const e = needState(c, 'MATCHING');
+  if (!e) return stale(c);
+  const raw = (modalFields(c.i.data?.components).get('groups') ?? '').trim();
+  const n = await countSignups(c.env, e.event_id);
+  const maxG = Math.floor(n / 2);
+  if (n < 2) {
+    return respond.ephemeral({ content: `⚠ Need at least 2 participants to form loops (currently ${n}).` });
+  }
+  if (!/^\d+$/.test(raw) || parseInt(raw, 10) < 1 || parseInt(raw, 10) > maxG) {
+    return respond.ephemeral({
+      content: `⚠ Number of groups must be an integer between **1** and **${maxG}** (⌊${n}/2⌋ — every loop needs at least 2 members). Reopen **🧩 Grouping** and try again.`,
+    });
+  }
+  const g = parseInt(raw, 10);
+  bg(c, async () => {
+    const ordered = await orderedSignups(c.env, e.event_id);
+    // Full-list Fisher–Yates, then deal into contiguous blocks (§7.1).
+    const order = shuffled(ordered);
+    const sizes = dealSizes(order.length, g);
+    const stmts: D1PreparedStatement[] = [];
+    const fresh: typeof ordered = [];
+    let idx = 0;
+    sizes.forEach((size, block) => {
+      for (let k = 0; k < size; k++, idx++) {
+        const s = order[idx]!;
+        stmts.push(c.env.DB.prepare(
+          'UPDATE signups SET row_order = ?1, group_no = ?2, updated_at = ?3 WHERE signup_id = ?4',
+        ).bind(idx, block + 1, now(), s.signup_id));
+        fresh.push({ ...s, row_order: idx, group_no: block + 1 });
+      }
+    });
+    await dbBatchChunked(c.env, stmts);
+    const items = await getItems(c.env, e.event_id);
+    await rewriteSheet(c.env, c.guild, e, items, fresh);
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content: `🧩 Grouped **${order.length}** participants into **${g}** loop${g > 1 ? 's' : ''} (${sizes.join(' + ')}).`,
+    });
   });
   return respond.deferEphemeral();
 }

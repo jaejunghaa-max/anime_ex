@@ -232,14 +232,52 @@ export function parseReminderDays(input: string): number[] | null {
 }
 
 // ----------------------------------------------------------- loop math
-// The ordered row list IS the assignment (spec §1): santa(i) = i+1 mod n.
+// The ordered row list + the Group column ARE the assignment (spec §1):
+// santa(i) = the next row within i's group, wrapping at the block boundary.
+// Each group is exactly one cycle; with everyone in group 1 this is the
+// classic single loop. Works even if same-group rows are non-contiguous
+// (treats them as one loop in row order), though adoption always writes
+// contiguous blocks.
 
-export function santaIndex(i: number, n: number): number {
-  return (i + 1) % n;
+export interface LoopMap {
+  /** santa[i] = index (into the ordered array) of row i's Secret Santa. */
+  santa: number[];
+  /** recipient[i] = index of the row that received row i's recommendation. */
+  recipient: number[];
+  /** group_no → member indices in row order (insertion order = block order). */
+  groups: Map<number, number[]>;
 }
 
-export function recipientIndex(i: number, n: number): number {
-  return (i - 1 + n) % n;
+export function buildLoops(groupNos: number[]): LoopMap {
+  const groups = new Map<number, number[]>();
+  groupNos.forEach((g, i) => {
+    const members = groups.get(g);
+    if (members) members.push(i);
+    else groups.set(g, [i]);
+  });
+  const santa = new Array<number>(groupNos.length).fill(-1);
+  const recipient = new Array<number>(groupNos.length).fill(-1);
+  for (const members of groups.values()) {
+    members.forEach((rowIdx, k) => {
+      santa[rowIdx] = members[(k + 1) % members.length]!;
+      recipient[rowIdx] = members[(k - 1 + members.length) % members.length]!;
+    });
+  }
+  return { santa, recipient, groups };
+}
+
+/** Group sizes for Grouping (§7.1): n mod G groups of ⌈n/G⌉, rest ⌊n/G⌋ — never differ by more than 1. */
+export function dealSizes(n: number, g: number): number[] {
+  const big = Math.ceil(n / g);
+  const small = Math.floor(n / g);
+  const rem = n % g;
+  return [...Array<number>(rem).fill(big), ...Array<number>(g - rem).fill(small)];
+}
+
+/** "single loop" / "3 loops (4 + 3 + 3)" — validate reports & REVEALED panel. */
+export function loopsPhrase(sizes: number[]): string {
+  if (sizes.length <= 1) return 'single loop';
+  return `${sizes.length} loops (${sizes.join(' + ')})`;
 }
 
 /** Fisher–Yates over crypto randomness (spec §7.1). */

@@ -5,7 +5,7 @@
 import type { Cfg, Env, EventRow, GuildRow, JobRow } from './types';
 import { btn, editMessage, embed, linkBtn, row, Style } from './discord';
 import { isConnected, sheetUrl } from './google';
-import { ts } from './util';
+import { loopsPhrase, ts } from './util';
 
 export interface PanelStats {
   count: number;
@@ -14,13 +14,15 @@ export interface PanelStats {
   revealed: number;
   started: number;
   threadsLeft: number;
+  /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
+  groupSizes: number[];
   lastSync: number | null;
   activeJob: JobRow | null;
 }
 
 export async function panelStats(env: Env, event: EventRow | null): Promise<PanelStats> {
   if (!event) {
-    return { count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0, lastSync: null, activeJob: null };
+    return { count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0, groupSizes: [], lastSync: null, activeJob: null };
   }
   const agg = await env.DB.prepare(
     `SELECT COUNT(*) AS count,
@@ -37,6 +39,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   const lastSync = await env.DB
     .prepare("SELECT done_at FROM jobs WHERE event_id = ?1 AND kind = 'sync' AND done_at IS NOT NULL ORDER BY id DESC LIMIT 1")
     .bind(event.event_id).first<{ done_at: number }>();
+  const groups = await env.DB
+    .prepare('SELECT COUNT(*) AS c FROM signups WHERE event_id = ?1 GROUP BY group_no ORDER BY group_no')
+    .bind(event.event_id).all<{ c: number }>();
   return {
     count: agg?.count ?? 0,
     launched: agg?.launched ?? 0,
@@ -44,6 +49,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     revealed: agg?.revealed ?? 0,
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
+    groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
   };
@@ -140,21 +146,26 @@ export function renderManagerPanel(
         )],
       };
     case 'MATCHING': {
-      const loop =
-        e.loop_status === 'none' ? 'not yet shuffled'
-        : e.loop_status === 'shuffled' ? 'shuffled'
-        : 'manually reordered';
-      const validated = e.validated_at ? ` — last validated ${ts(e.validated_at, 'R')}` : '';
+      // Loops summary as of the last adoption into D1 (rev. 3 §5.4).
+      const loops = stats.groupSizes.length <= 1
+        ? 'single'
+        : `${stats.groupSizes.length} groups (${stats.groupSizes.join(' + ')})`;
+      const validated = e.validated_at ? `last validated ${ts(e.validated_at, 'R')}` : 'not validated yet';
       return {
         content: '',
         embeds: [embed({
           title: `🔀 Matching — ${e.topic}`,
           description:
-            `**${stats.count}** participants\n**Loop:** ${loop}${validated}\n` +
-            `Reorder rows in the sheet to hand-tune assignments, then **Validate**.\n${googleLine(guild)}`,
+            `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
+            `Hand-tune in the sheet: **reorder rows** for loop order, **edit the Group column** for loop membership — then **Validate**.\n${googleLine(guild)}`,
         })],
         components: [
-          row(...[sheetBtn, btn('ax:shuffle', '🔀 Shuffle'), btn('ax:validate', '✅ Validate')].filter(Boolean) as unknown[]),
+          row(...[
+            sheetBtn,
+            btn('ax:shuffle', '🔀 Shuffle'),
+            btn('ax:grouping', '🧩 Grouping'),
+            btn('ax:validate', '✅ Validate'),
+          ].filter(Boolean) as unknown[]),
           row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS)),
         ],
       };
@@ -215,7 +226,7 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎉 Revealed — ${e.topic}`,
           description:
-            `**${stats.count}** participants · review deadline was ${ts(e.review_deadline!)}\n` +
+            `**${stats.count}** participants · ${loopsPhrase(stats.groupSizes)} · review deadline was ${ts(e.review_deadline!)}\n` +
             `Docs are view-only; reveals are posted in participant threads.` + finishing,
         })],
         components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.DANGER)].filter(Boolean) as unknown[])],

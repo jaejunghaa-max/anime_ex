@@ -8,7 +8,7 @@ import { getItems, orderedSignups, transition } from './db';
 import { drainJobs } from './jobs';
 import { repaintPanels } from './panels';
 import { adoptSignupOrder } from './validate';
-import { now, santaIndex, ts } from './util';
+import { buildLoops, now, ts, type LoopMap } from './util';
 
 export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Promise<void> {
   const minute = new Date(scheduledTimeMs).getUTCMinutes();
@@ -134,10 +134,13 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
   if (due.results.length === 0) return 0;
 
   // Given anime per participant = their santa's recommendation → needs the
-  // loop order; load it once per event (usually a single event).
-  const orders = new Map<number, Awaited<ReturnType<typeof orderedSignups>>>();
+  // loop structure (per-group next row); load once per event.
+  const orders = new Map<number, { all: Awaited<ReturnType<typeof orderedSignups>>; loops: LoopMap }>();
   for (const r of due.results) {
-    if (!orders.has(r.event_id)) orders.set(r.event_id, await orderedSignups(env, r.event_id));
+    if (!orders.has(r.event_id)) {
+      const all = await orderedSignups(env, r.event_id);
+      orders.set(r.event_id, { all, loops: buildLoops(all.map((s) => s.group_no)) });
+    }
   }
 
   let spent = 0;
@@ -154,9 +157,10 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
       continue;
     }
 
-    const all = orders.get(r.event_id)!;
+    const { all, loops } = orders.get(r.event_id)!;
     const idx = all.findIndex((s) => s.signup_id === r.signup_id);
-    const santa = idx >= 0 && all.length > 1 ? all[santaIndex(idx, all.length)] : undefined;
+    const santaIdx = idx >= 0 ? loops.santa[idx]! : -1;
+    const santa = santaIdx >= 0 && santaIdx !== idx ? all[santaIdx] : undefined;
     const anime = santa?.anime_title ?? 'your assigned anime';
     const me = idx >= 0 ? all[idx] : undefined;
     const daysLeft = Math.max(1, Math.round((r.review_deadline - r.due_at) / 86400));

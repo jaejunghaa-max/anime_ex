@@ -16,7 +16,7 @@ import {
 } from './google';
 import { repaintPanels } from './panels';
 import { writeReviewLinks, writeSyncCells, wroteCell } from './sheet';
-import { chunkLines, epochToZoned, now, recipientIndex, santaIndex, truncate, ts } from './util';
+import { buildLoops, chunkLines, epochToZoned, now, truncate, ts } from './util';
 
 const WROTE_GRACE_S = 60;
 const WROTE_MIN_CHARS = 50;
@@ -118,8 +118,11 @@ function assignmentCard(
 
 async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
   const all = await orderedSignups(env, event.event_id);
-  const n = all.length;
-  const pending = all.filter((s) => !s.assignment_posted).slice(0, cfg.jobBatch);
+  const loops = buildLoops(all.map((s) => s.group_no)); // santa = next row within the group (§1)
+  const pending = all
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => !s.assignment_posted)
+    .slice(0, cfg.jobBatch);
 
   if (pending.length === 0) {
     await transition(env, event.event_id, 'LAUNCHING', 'RUNNING');
@@ -133,10 +136,9 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
   const linkWrites: Array<{ rowIndex: number; url: string }> = [];
   const finalStmts: D1PreparedStatement[] = [];
 
-  for (const s of pending) {
-    const idx = s.row_order ?? all.indexOf(s);
-    const santa = all[santaIndex(idx, n)]!;
-    const recipient = all[recipientIndex(idx, n)]!;
+  for (const { s, idx } of pending) {
+    const santa = all[loops.santa[idx]!]!;
+    const recipient = all[loops.recipient[idx]!]!;
 
     // Docs sub-steps persist immediately after creation so a crash between
     // calls never duplicates a doc/thread on the next tick (§7.4).
@@ -207,12 +209,20 @@ function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Reco
 }
 
 async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: SignupRow[]): Promise<void> {
-  const n = all.length;
-  const lines = all.map((s, i) => {
-    const recipient = all[recipientIndex(i, n)]!;
-    const link = recipient.doc_url ? ` ([review](${recipient.doc_url}))` : '';
-    return `🎁 <@${s.user_id}> recommended **${s.anime_title}** → reviewed by <@${recipient.user_id}>${link}`;
-  });
+  // One section per loop (§6.4): "**Loop 1** (10)" then its cycle in block
+  // order; single-group events get one untitled section.
+  const loops = buildLoops(all.map((s) => s.group_no));
+  const multi = loops.groups.size > 1;
+  const lines: string[] = [];
+  for (const [g, members] of loops.groups) {
+    if (multi) lines.push(`**Loop ${g}** (${members.length})`);
+    for (const i of members) {
+      const s = all[i]!;
+      const recipient = all[loops.recipient[i]!]!;
+      const link = recipient.doc_url ? ` ([review](${recipient.doc_url}))` : '';
+      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → reviewed by <@${recipient.user_id}>${link}`);
+    }
+  }
   // ≤10 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
   // chars per message; mentions inside embeds don't ping.
   const chunks = chunkLines(lines, 3900, 10);
@@ -240,6 +250,7 @@ async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: Sign
 async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
   const all = await orderedSignups(env, event.event_id);
   const n = all.length;
+  const loops = buildLoops(all.map((s) => s.group_no));
   const payload = JSON.parse(job.payload_json || '{}') as { gallery?: boolean };
 
   // Phase 1 — ALL docs flip read-only before ANY reveal link is posted (§7.6,
@@ -269,13 +280,15 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
   }
 
   // Phase 2 — reveal cards.
-  const toReveal = all.filter((s) => !s.reveal_posted).slice(0, cfg.jobBatch);
+  const toReveal = all
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => !s.reveal_posted)
+    .slice(0, cfg.jobBatch);
   if (toReveal.length > 0) {
     const stmts: D1PreparedStatement[] = [];
-    for (const s of toReveal) {
-      const idx = s.row_order ?? all.indexOf(s);
-      const santa = all[santaIndex(idx, n)]!;
-      const recipient = all[recipientIndex(idx, n)]!;
+    for (const { s, idx } of toReveal) {
+      const santa = all[loops.santa[idx]!]!;
+      const recipient = all[loops.recipient[idx]!]!;
       if (s.thread_id) {
         await postMessage(env, s.thread_id, revealCard(s, santa, recipient)).catch((e) => {
           if (!(e instanceof DiscordApiError && (e.status === 404 || e.status === 403))) throw e;

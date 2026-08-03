@@ -71,6 +71,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     switch (action) {
       case 'basics': return mgr.basicsSubmit(c);
       case 'item': return mgr.itemSubmit(c, arg);
+      case 'grouping': return mgr.groupingSubmit(c);
       case 'launch': return mgr.launchSubmit(c);
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
@@ -100,6 +101,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'stop': return arg === 'go' ? mgr.stopSignupsGo(c) : mgr.stopSignups(c);
     case 'reopen': return arg === 'go' ? mgr.reopenSignupsGo(c) : mgr.reopenSignups(c);
     case 'shuffle': return mgr.shuffle(c);
+    case 'grouping': return mgr.groupingModal(c);
     case 'validate': return mgr.validate(c);
     case 'rm_confirm': return mgr.removalConfirm(c, arg);
     case 'rm_restore': return mgr.removalRestore(c, arg);
