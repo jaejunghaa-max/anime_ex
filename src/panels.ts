@@ -261,13 +261,15 @@ export function renderParticipantPanel(
       const banner = e.signup_banner_flipped
         ? '\n\n**⏰ Deadline passed — still accepting until the manager closes sign-ups.**'
         : '';
+      // The live signup count is deliberately manager-only — the participant
+      // panel never shows how many people have signed up.
       return {
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
             `${HOW_IT_WORKS}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
-            `**Sign-up form:** anime pick + ${itemCount} question(s)\n**${stats.count}** signed up${banner}`,
+            `**Sign-up form:** anime pick + ${itemCount} question(s)${banner}`,
         })],
         components: [row(
           btn('ax:signup', '📝 Sign Up', Style.PRIMARY),
