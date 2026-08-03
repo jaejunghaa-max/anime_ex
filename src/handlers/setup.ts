@@ -1,0 +1,155 @@
+// /setup init|repair (spec §3.1). An HTTP-only bot gets no "invited" event,
+// so resource creation is explicit — and `repair` re-creates anything missing
+// from the stored ids (panels re-render from D1, restart-safe by design).
+
+import type { Cfg, Env, EventRow, GuildRow, Interaction } from '../types';
+import {
+  addMemberRole, createChannel, createRole, dapi, DiscordApiError, editOriginal,
+  managerChannelOverwrites, participantChannelOverwrites, pinMessage, postMessage, respond,
+} from '../discord';
+import { panelStats, renderManagerPanel, renderParticipantPanel } from '../panels';
+import { now } from '../util';
+
+const MANAGER_CHANNEL = 'anime-exchange-manager';
+const PARTICIPANT_CHANNEL = 'anime-exchange';
+
+const ADMIN_BIT = 8n;
+
+export function isAdmin(i: Interaction): boolean {
+  try {
+    return (BigInt(i.member?.permissions ?? '0') & ADMIN_BIT) === ADMIN_BIT;
+  } catch {
+    return false;
+  }
+}
+
+async function exists(env: Env, path: string): Promise<boolean> {
+  try {
+    await dapi(env, 'GET', path);
+    return true;
+  } catch (e) {
+    if (e instanceof DiscordApiError && (e.status === 404 || e.status === 403)) return false;
+    throw e;
+  }
+}
+
+/** Post a panel, pin it, and sweep the "pinned a message" system notice. */
+async function postPanel(env: Env, channelId: string, payload: unknown): Promise<string> {
+  const msg = await postMessage(env, channelId, payload);
+  await pinMessage(env, channelId, msg.id).catch(() => {});
+  const recent = await dapi<Array<{ id: string; type: number }>>(
+    env, 'GET', `/channels/${channelId}/messages?limit=5`,
+  ).catch(() => [] as Array<{ id: string; type: number }>);
+  for (const m of recent) {
+    if (m.type === 6) await dapi(env, 'DELETE', `/channels/${channelId}/messages/${m.id}`).catch(() => {});
+  }
+  return msg.id;
+}
+
+export async function handleSetup(
+  env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction,
+): Promise<Response> {
+  const sub = i.data?.options?.[0]?.name === 'repair' ? 'repair' : 'init';
+  const guildId = i.guild_id;
+  const invoker = i.member?.user.id;
+  if (!guildId || !invoker) return respond.ephemeral({ content: 'Run this inside a server.' });
+  if (!isAdmin(i)) return respond.ephemeral({ content: '🔒 `/setup` needs the **Administrator** permission.' });
+
+  ec.waitUntil(
+    doSetup(env, cfg, guildId, invoker, sub)
+      .then((summary) => editOriginal(env, i.token, { content: summary }))
+      .catch(async (e: unknown) => {
+        console.error('setup failed', e);
+        const hint = e instanceof DiscordApiError && e.status === 403
+          ? ' The bot is missing permissions — re-invite it with the URL from `npm run register` (Manage Roles, Manage Channels, Manage Threads, …).'
+          : '';
+        await editOriginal(env, i.token, { content: `⚠ Setup failed: ${e instanceof Error ? e.message : e}${hint}` }).catch(() => {});
+      }),
+  );
+  return respond.deferEphemeral();
+}
+
+async function doSetup(
+  env: Env, cfg: Cfg, guildId: string, invoker: string, sub: 'init' | 'repair',
+): Promise<string> {
+  const botId = env.DISCORD_APP_ID;
+  const existing = await env.DB.prepare('SELECT * FROM guilds WHERE guild_id = ?1')
+    .bind(guildId).first<GuildRow>();
+  const notes: string[] = [];
+  if (sub === 'repair' && !existing) return '⚠ Nothing to repair — run `/setup init` first.';
+  if (sub === 'init' && existing) notes.push('Already set up — verifying and repairing missing pieces instead.');
+
+  const g: GuildRow = existing ?? {
+    guild_id: guildId,
+    manager_channel_id: null, participant_channel_id: null,
+    manager_msg_id: null, participant_msg_id: null,
+    manager_role_id: null,
+    google_refresh_token_enc: null, google_email: null,
+    created_at: now(),
+  };
+
+  // 1. Role — a visibility key only, no Discord permissions (§3.1).
+  let roleOk = false;
+  if (g.manager_role_id) {
+    const roles = await dapi<Array<{ id: string }>>(env, 'GET', `/guilds/${guildId}/roles`);
+    roleOk = roles.some((r) => r.id === g.manager_role_id);
+  }
+  if (!roleOk) {
+    const role = await createRole(env, guildId, 'Exchange Manager');
+    g.manager_role_id = role.id;
+    await addMemberRole(env, guildId, invoker, role.id).catch(() => {
+      notes.push('Could not assign the Exchange Manager role to you — move the bot’s role above it and assign manually.');
+    });
+    notes.push('Created the **Exchange Manager** role.');
+  }
+
+  // 2 + 3. Channels.
+  if (!g.manager_channel_id || !(await exists(env, `/channels/${g.manager_channel_id}`))) {
+    const ch = await createChannel(env, guildId, MANAGER_CHANNEL,
+      'Anime Exchange — manager controls. Buttons on the pinned panel.',
+      managerChannelOverwrites(guildId, g.manager_role_id!, botId));
+    g.manager_channel_id = ch.id;
+    g.manager_msg_id = null;
+    notes.push(`Created <#${ch.id}>.`);
+  }
+  if (!g.participant_channel_id || !(await exists(env, `/channels/${g.participant_channel_id}`))) {
+    const ch = await createChannel(env, guildId, PARTICIPANT_CHANNEL,
+      'Anime Exchange — sign up on the pinned panel. Your assignment arrives in a private thread.',
+      participantChannelOverwrites(guildId, botId));
+    g.participant_channel_id = ch.id;
+    g.participant_msg_id = null;
+    notes.push(`Created <#${ch.id}>.`);
+  }
+
+  // 4. Panels (rendered from current D1 state — repair-safe).
+  const event = await env.DB.prepare('SELECT * FROM events WHERE guild_id = ?1')
+    .bind(guildId).first<EventRow>();
+  const stats = await panelStats(env, event);
+  if (!g.manager_msg_id || !(await exists(env, `/channels/${g.manager_channel_id}/messages/${g.manager_msg_id}`))) {
+    g.manager_msg_id = await postPanel(env, g.manager_channel_id!,
+      renderManagerPanel(cfg, g, event, stats, []));
+    notes.push('Posted + pinned the manager panel.');
+  }
+  if (!g.participant_msg_id || !(await exists(env, `/channels/${g.participant_channel_id}/messages/${g.participant_msg_id}`))) {
+    g.participant_msg_id = await postPanel(env, g.participant_channel_id!,
+      renderParticipantPanel(cfg, g, event, stats, 0));
+    notes.push('Posted + pinned the participant panel.');
+  }
+
+  // 5. Persist ids (google connection untouched).
+  await env.DB.prepare(
+    `INSERT INTO guilds (guild_id, manager_channel_id, participant_channel_id, manager_msg_id,
+                         participant_msg_id, manager_role_id, created_at)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+     ON CONFLICT(guild_id) DO UPDATE SET
+       manager_channel_id = excluded.manager_channel_id,
+       participant_channel_id = excluded.participant_channel_id,
+       manager_msg_id = excluded.manager_msg_id,
+       participant_msg_id = excluded.participant_msg_id,
+       manager_role_id = excluded.manager_role_id`,
+  ).bind(guildId, g.manager_channel_id, g.participant_channel_id, g.manager_msg_id,
+    g.participant_msg_id, g.manager_role_id, g.created_at).run();
+
+  const done = notes.length ? notes.map((n) => `• ${n}`).join('\n') : '• Everything already in place — panels re-verified.';
+  return `✅ Setup ${sub === 'repair' ? 'repair ' : ''}complete:\n${done}\n\nNext: open <#${g.manager_channel_id}> and press **Connect Google**, then **New Event**.`;
+}
