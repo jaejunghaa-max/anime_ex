@@ -306,15 +306,19 @@ export async function openSignupsGo(c: HCtx): Promise<Response> {
   if (!e || !e.topic || !e.signup_deadline || !e.tz || !isConnected(c.guild)) return stale(c);
   bg(c, async () => {
     let sheetId = e.sheet_id;
+    let sheetGid = e.sheet_gid;
     if (!sheetId) {
       const title = `Anime Exchange — ${e.topic} — ${epochToZoned(now(), e.tz!).slice(0, 10)}`;
       const created = await createSpreadsheet(c.env, c.guild, title);
       sheetId = created.spreadsheetId;
+      sheetGid = created.gid;
       await c.env.DB.prepare('UPDATE events SET sheet_id = ?1, sheet_gid = ?2, updated_at = ?3 WHERE event_id = ?4')
         .bind(created.spreadsheetId, created.gid, now(), e.event_id).run();
-      const items = await getItems(c.env, e.event_id);
-      await writeHeader(c.env, c.guild, { ...e, sheet_id: created.spreadsheetId, sheet_gid: created.gid }, items);
     }
+    // Unconditional: if a previous attempt created the sheet but died before
+    // the header landed, the retry must still write it.
+    const items = await getItems(c.env, e.event_id);
+    await writeHeader(c.env, c.guild, { ...e, sheet_id: sheetId, sheet_gid: sheetGid }, items);
     if (!(await transition(c.env, e.event_id, 'DRAFTING', 'SIGNUP_OPEN'))) {
       await editOriginal(c.env, c.i.token, { content: '↻ State changed — panels refreshed.', components: [] });
       await repaint(c);
@@ -805,6 +809,60 @@ export async function finishGo(c: HCtx): Promise<Response> {
       content: queued
         ? '🧹 Finishing — private threads are being removed (batched); both panels reset when done.'
         : '🧹 Already finishing — panels reset when done.',
+      components: [],
+    });
+  });
+  return respond.deferUpdate();
+}
+
+// ------------------------------------------------------------------ abort
+// The red escape hatch (every non-IDLE state): kills the event no matter
+// what's stuck — cancels active jobs first so cleanup can't queue behind a
+// wedged launch/close, purges unsent reminders, then tears down. Google
+// artifacts always stay in the manager's Drive.
+
+export function abort(c: HCtx): Response {
+  if (!c.event) return stale(c, 'No event to abort.');
+  return confirm(
+    '🛑 **Abort this event?** The bot\'s event data and any private threads are deleted, and any running launch/close/sync stops. ' +
+    '**Your Google Sheet and Docs stay in your Drive.** This cannot be undone.',
+    'ax:abort:go', 'Confirm — abort event',
+  );
+}
+
+export async function abortGo(c: HCtx): Promise<Response> {
+  const e = c.event;
+  if (!e) return stale(c, 'No event to abort.');
+  bg(c, async () => {
+    // Cancel whatever is in flight; per-event FIFO would otherwise park the
+    // cleanup job behind a stuck launch/close forever.
+    await c.env.DB.batch([
+      c.env.DB.prepare("UPDATE jobs SET done_at = ?1, last_error = 'aborted by manager' WHERE event_id = ?2 AND done_at IS NULL")
+        .bind(now(), e.event_id),
+      c.env.DB.prepare('DELETE FROM reminders WHERE event_id = ?1 AND sent_at IS NULL').bind(e.event_id),
+    ]);
+    const hasThreads = await c.env.DB
+      .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND thread_id IS NOT NULL')
+      .bind(e.event_id).first<{ n: number }>();
+    if ((hasThreads?.n ?? 0) === 0) {
+      // Nothing launched yet → instant teardown, no fan-out needed.
+      await c.env.DB.batch([
+        c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
+        c.env.DB.prepare('DELETE FROM events WHERE event_id = ?1').bind(e.event_id),
+      ]);
+      await repaint(c);
+      await editOriginal(c.env, c.i.token, {
+        content: '🛑 **Event aborted** — panels reset. The sheet (if created) stays in your Drive.',
+        components: [],
+      });
+      return;
+    }
+    // Threads exist → batched teardown via the finish job (§13.1: fan-out
+    // never runs in handlers). Panels reset when the last thread is gone.
+    await enqueueJob(c, e.event_id, 'finish');
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content: '🛑 **Aborting** — private threads are being removed (batched); both panels reset when done.',
       components: [],
     });
   });

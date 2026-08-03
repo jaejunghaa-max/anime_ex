@@ -15,8 +15,19 @@ import {
   GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
 import { repaintPanels } from './panels';
-import { lengthCell, scoreCell, writeReviewLinks, writeStatusCells } from './sheet';
+import { lengthCell, rewriteSheet, scoreCell, writeReviewLinks, writeStatusCells } from './sheet';
 import { buildLoops, chunkLines, epochToZoned, now, truncate, ts } from './util';
+
+/** Convergence self-heal: one full sheet rewrite from D1, best-effort. Run at
+ *  job completion so any drift (failed cell writes, layout changes, manual
+ *  edits mid-run) corrects itself without manager action. */
+async function healSheet(env: Env, guild: GuildRow, event: EventRow): Promise<void> {
+  const items = await getItems(env, event.event_id);
+  const all = await orderedSignups(env, event.event_id);
+  await rewriteSheet(env, guild, event, items, all).catch((e) => {
+    console.error('sheet self-heal failed (non-fatal)', e);
+  });
+}
 
 const WROTE_GRACE_S = 60;
 const WROTE_MIN_CHARS = 50;
@@ -189,6 +200,7 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
   if ((left?.n ?? 0) === 0) {
     await transition(env, event.event_id, 'LAUNCHING', 'RUNNING');
     await markDone(env, job);
+    await healSheet(env, guild, event); // review links + any drift, in one pass
   }
   await repaintPanels(env, cfg, guild.guild_id); // LAUNCHING panel counts up (§5.4b)
 }
@@ -348,7 +360,9 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
         stmts.push(env.DB.prepare(
           'UPDATE signups SET doc_missing = 1, wrote = 0, synced_at = ?1, updated_at = ?1 WHERE signup_id = ?2',
         ).bind(now(), s.signup_id));
-        cells.push({ rowIndex: s.row_order ?? 0, length: lengthCell({ ...s, doc_missing: 1 }), score: scoreCell(s) });
+        if (s.row_order !== null) {
+          cells.push({ rowIndex: s.row_order, length: lengthCell({ ...s, doc_missing: 1 }), score: scoreCell(s) });
+        }
         wroteChanged = wroteChanged || s.wrote === 1;
         continue;
       }
@@ -373,11 +387,13 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
     stmts.push(env.DB.prepare(
       'UPDATE signups SET last_edited = ?1, char_count = ?2, wrote = ?3, doc_missing = 0, synced_at = ?4, updated_at = ?4 WHERE signup_id = ?5',
     ).bind(mtime, chars, wrote, now(), s.signup_id));
-    cells.push({
-      rowIndex: s.row_order ?? 0,
-      length: lengthCell({ ...s, char_count: chars, doc_missing: 0 }),
-      score: scoreCell(s),
-    });
+    if (s.row_order !== null) {
+      cells.push({
+        rowIndex: s.row_order,
+        length: lengthCell({ ...s, char_count: chars, doc_missing: 0 }),
+        score: scoreCell(s),
+      });
+    }
   }
 
   await env.DB.batch(stmts);
@@ -388,7 +404,10 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
   const left = await env.DB.prepare(
     'SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND doc_id IS NOT NULL AND (synced_at IS NULL OR synced_at < ?2)',
   ).bind(event.event_id, job.created_at).first<{ n: number }>();
-  if ((left?.n ?? 0) === 0) await markDone(env, job);
+  if ((left?.n ?? 0) === 0) {
+    await markDone(env, job);
+    await healSheet(env, guild, event); // hourly convergence for the whole sheet
+  }
   if (wroteChanged || (left?.n ?? 0) === 0) {
     await repaintPanels(env, cfg, guild.guild_id); // progress fraction changed (§8.5)
   }

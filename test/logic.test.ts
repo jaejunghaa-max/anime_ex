@@ -4,7 +4,7 @@ import {
   sanitizeName, shuffled, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
-import { colLetter, headerRow, layoutOf } from '../src/sheet';
+import { a1, colLetter, headerRow, layoutOf } from '../src/sheet';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
 import type { FormItem } from '../src/types';
@@ -177,6 +177,9 @@ describe('sheet layout (§8.3)', () => {
     expect(colLetter(1)).toBe('A');
     expect(colLetter(26)).toBe('Z');
     expect(colLetter(27)).toBe('AA');
+  });
+  it("quotes the tab title in A1 ranges (hyphen breaks Google's parser unquoted)", () => {
+    expect(a1('A1:T21')).toBe("'Sign-Ups'!A1:T21");
   });
   it('header marks hidden items, places Group before the derived block', () => {
     const h = headerRow(items);

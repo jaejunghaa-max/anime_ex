@@ -70,6 +70,15 @@ function stallLine(job: JobRow | null): string {
   return '';
 }
 
+/** Shown while an abort's finish job is tearing threads down. */
+function abortingLine(stats: PanelStats): string {
+  return stats.activeJob?.kind === 'finish'
+    ? `\n🛑 Aborting — ${stats.threadsLeft} thread(s) left to remove; panels reset when done.`
+    : '';
+}
+
+const abortBtn = () => btn('ax:abort', '🛑 Abort', Style.DANGER);
+
 const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google' : '🔗 Connect Google');
 
 export interface ItemSummary { label: string; type: 'FIB' | 'MCQ'; optionCount: number; visible: boolean }
@@ -126,6 +135,7 @@ export function renderManagerPanel(
             btn('ax:google', googleBtnLabel(guild)),
             btn('ax:open', '📨 Open Sign-Ups', Style.SUCCESS),
             btn('ax:discard', '🗑 Discard', Style.DANGER),
+            abortBtn(),
           ),
         ],
       };
@@ -142,7 +152,8 @@ export function renderManagerPanel(
         })],
         components: [row(
           btn('ax:view_signups', '📋 View Sign-Ups'),
-          btn('ax:stop', '🛑 Stop Sign-Ups', Style.DANGER),
+          btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
+          abortBtn(),
         )],
       };
     case 'MATCHING': {
@@ -157,16 +168,16 @@ export function renderManagerPanel(
           title: `🔀 Matching — ${e.topic}`,
           description:
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Hand-tune in the sheet: **reorder rows** for loop order, **edit the Group column** for loop membership — then **Validate**.\n${googleLine(guild)}`,
+            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate**.\n${googleLine(guild)}`,
         })],
         components: [
           row(...[
             sheetBtn,
-            btn('ax:shuffle', '🔀 Shuffle'),
             btn('ax:grouping', '🧩 Grouping'),
+            btn('ax:shuffle', '🔀 Shuffle'),
             btn('ax:validate', '✅ Validate'),
           ].filter(Boolean) as unknown[]),
-          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS)),
+          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS), abortBtn()),
         ],
       };
     }
@@ -179,9 +190,9 @@ export function renderManagerPanel(
           title: `🚀 Launching — ${e.topic}`,
           description:
             `**${stats.launched} / ${stats.count}** assignments delivered · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: sheetBtn ? [row(sheetBtn)] : [],
+        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     case 'RUNNING': {
@@ -193,13 +204,14 @@ export function renderManagerPanel(
           description:
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
             `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(
           btn('ax:view_event', '📊 View Event'),
           btn('ax:refresh', '🔄 Refresh Status'),
           btn('ax:remind', '📣 Remind Now'),
-          btn('ax:close', '🏁 Close Reviews', Style.DANGER),
+          btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
+          abortBtn(),
         )],
       };
     }
@@ -212,9 +224,9 @@ export function renderManagerPanel(
           description:
             `Flipping docs read-only and posting reveals… **${done} / ${stats.count}**\n` +
             `(read-only: ${stats.flipped}/${stats.count} · reveals: ${stats.revealed}/${stats.count})` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: sheetBtn ? [row(sheetBtn)] : [],
+        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     case 'REVEALED': {
@@ -229,7 +241,7 @@ export function renderManagerPanel(
             `**${stats.count}** participants · ${loopsPhrase(stats.groupSizes)} · review deadline was ${ts(e.review_deadline!)}\n` +
             `Docs are view-only; reveals are posted in participant threads.` + finishing,
         })],
-        components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.DANGER)].filter(Boolean) as unknown[])],
+        components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.PRIMARY), abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     default:

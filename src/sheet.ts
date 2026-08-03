@@ -10,6 +10,16 @@ import {
 import { answersOf } from './db';
 import { buildLoops, type LoopMap } from './util';
 
+/**
+ * A1 range on the data tab. The tab title contains a hyphen, which Google's
+ * A1 parser only accepts when the title is single-quoted — unquoted,
+ * `Sign-Ups!A1:T21` 400s with "Unable to parse range", which silently
+ * starved every sheet write while the spreadsheet itself created fine.
+ */
+export function a1(range: string): string {
+  return `'${SHEET_TAB}'!${range}`;
+}
+
 /** 1-indexed column number → A1 letter(s). */
 export function colLetter(n: number): string {
   let s = '';
@@ -107,12 +117,12 @@ export async function rewriteSheet(
   const derived = ordered.length >= 2 && ordered.every((s) => s.row_order !== null);
   const loops: LoopMap | null = derived ? buildLoops(ordered.map((s) => s.group_no)) : null;
   const end = colLetter(layout.lastCol);
-  await valuesClear(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${colLetter(layout.lastCol + 3)}1000`);
+  await valuesClear(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol + 3)}1000`));
   const values = [
     headerRow(items),
     ...ordered.map((s, i) => dataRow(s, i, loops ? ordered[loops.santa[i]!] : undefined, items)),
   ];
-  await valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!A1:${end}${ordered.length + 1}`, values);
+  await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${end}${ordered.length + 1}`), values);
 }
 
 export async function writeHeader(
@@ -120,8 +130,7 @@ export async function writeHeader(
 ): Promise<void> {
   if (!event.sheet_id) return;
   const header = headerRow(items);
-  await valuesUpdate(env, guild, event.sheet_id,
-    `${SHEET_TAB}!A1:${colLetter(header.length)}1`, [header]);
+  await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${colLetter(header.length)}1`), [header]);
   if (event.sheet_gid !== null) {
     const layout = layoutOf(items);
     await addHeaderNotes(env, guild, event.sheet_id, event.sheet_gid, [
@@ -144,7 +153,7 @@ export async function readSheetRows(
 ): Promise<string[][]> {
   if (!event.sheet_id) return [];
   const layout = layoutOf(items);
-  return valuesGet(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${colLetter(layout.lastCol)}1000`);
+  return valuesGet(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol)}1000`));
 }
 
 /** Batched per-tick cell writes: Review Link during Launch (§7.5). */
@@ -155,7 +164,7 @@ export function writeReviewLinks(
   if (!event.sheet_id || rows.length === 0) return Promise.resolve();
   const col = colLetter(layoutOf(items).linkCol);
   return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: `${SHEET_TAB}!${col}${r.rowIndex + 2}`,
+    range: a1(`${col}${r.rowIndex + 2}`),
     values: [[r.url]],
   })));
 }
@@ -170,7 +179,7 @@ export function writeStatusCells(
   const from = colLetter(layout.lengthCol);
   const to = colLetter(layout.scoreCol);
   return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: `${SHEET_TAB}!${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`,
+    range: a1(`${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`),
     values: [[r.length, r.score]],
   })));
 }
@@ -181,5 +190,5 @@ export function writeScoreCell(
 ): Promise<unknown> {
   if (!event.sheet_id) return Promise.resolve();
   const col = colLetter(layoutOf(items).scoreCol);
-  return valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!${col}${rowIndex + 2}`, [[score]]);
+  return valuesUpdate(env, guild, event.sheet_id, a1(`${col}${rowIndex + 2}`), [[score]]);
 }

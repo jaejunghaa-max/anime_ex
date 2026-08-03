@@ -104,10 +104,13 @@ Everything happens on the two pinned panels:
    optional second modal (items 5–9) → confirm. Edit/withdraw any time while
    sign-ups are open.
 3. **Stop Sign-Ups** → arrange the loops → **Validate** → **Launch**.
-   - **🧩 Grouping** splits everyone into G random loops of near-equal size
-     (G ≤ ⌊n/2⌋; G = 1 is the classic single loop). Re-roll freely.
-   - **🔀 Shuffle** re-draws the order *within each group independently*,
-     preserving membership — randomize assignments after hand-curating groups.
+   The process order is **Grouping first, then Shuffle**:
+   - **🧩 Grouping** (step 1) splits everyone into G random loops of
+     near-equal size (G ≤ ⌊n/2⌋; G = 1 is the classic single loop). Re-roll
+     freely.
+   - **🔀 Shuffle** (step 2) re-draws the order *within each group
+     independently*, preserving membership — randomize assignments after
+     grouping or hand-curating.
    - **Manual control = two sheet levers**: reorder rows (loop order) and edit
      the **Group** column (loop membership; blank = 1). Your santa is simply
      the next row *within your group's block*; the Santa/Given columns are
@@ -144,6 +147,10 @@ Everything happens on the two pinned panels:
 - **Restart-safe by construction:** panels re-render from D1; jobs re-enter on
   per-unit markers; duplicate enqueues are blocked by a partial unique index;
   every state transition is a conditional `UPDATE … WHERE state = ?`.
+- **🛑 Abort:** every non-IDLE state has a red Abort button — it cancels any
+  in-flight launch/close/sync job, purges unsent reminders, deletes threads
+  (batched) and resets both panels to IDLE. The sheet and docs always stay in
+  the manager's Drive. Use it whenever an event is wedged.
 - **Stalls self-heal:** after 5 consecutive failing ticks the manager panel
   shows the job's last error (e.g. the Google reconnect prompt); the dispatcher
   retries every minute, so fixing the cause is sufficient.

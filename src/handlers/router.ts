@@ -117,6 +117,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       return mgr.closeReviews(c);
     // REVEALED (manager)
     case 'finish': return arg === 'go' ? mgr.finishGo(c) : mgr.finish(c);
+    // any non-IDLE state (manager)
+    case 'abort': return arg === 'go' ? mgr.abortGo(c) : mgr.abort(c);
     // participant wizard
     case 'signup': return su.signupStart(c, false);
     case 'edit_signup': return su.signupStart(c, true);
