@@ -28,7 +28,7 @@ SFW_ONLY = "true"
 [[d1_databases]]
 binding = "DB"
 database_name = "anime-exchange"
-database_id = "eb79935c-0580-4164-972d-77599ba64846"
+database_id = "2a130e91-f5a4-42a9-b89d-7e0bb4fc5fac"
 migrations_dir = "migrations"
 
 [triggers]
