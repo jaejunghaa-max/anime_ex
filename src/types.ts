@@ -16,6 +16,7 @@ export interface Env {
   REMINDERS_PER_TICK?: string;
   ANILIST_FALLBACK?: string;
   SFW_ONLY?: string;
+  MAL_CLIENT_ID?: string;
 }
 
 export interface Cfg {
@@ -24,6 +25,8 @@ export interface Cfg {
   remindersPerTick: number;
   anilistFallback: boolean;
   sfwOnly: boolean;
+  /** Official MAL API v2 client id — primary search source when set. */
+  malClientId: string | null;
 }
 
 export function cfgOf(env: Env): Cfg {
@@ -37,6 +40,7 @@ export function cfgOf(env: Env): Cfg {
     remindersPerTick: int(env.REMINDERS_PER_TICK, 30),
     anilistFallback: (env.ANILIST_FALLBACK ?? 'true') !== 'false',
     sfwOnly: (env.SFW_ONLY ?? 'true') !== 'false',
+    malClientId: env.MAL_CLIENT_ID?.trim() || null,
   };
 }
 

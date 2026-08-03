@@ -6,9 +6,14 @@
 import type { Env, Interaction } from './types';
 import { cfgOf } from './types';
 import { cronTick } from './cron';
+import { diagnoseSearch } from './mal';
 import { oauthCallback, oauthStart } from './oauth';
 import { routeInteraction } from './handlers/router';
 import { verifyDiscordSignature } from './util';
+
+// Bumped on releases; shown on the health route so "is the new code live?"
+// is answerable from a browser.
+const BUILD = '2.5.0-mal-official';
 
 export default {
   async fetch(req: Request, env: Env, ec: ExecutionContext): Promise<Response> {
@@ -38,8 +43,20 @@ export default {
     if (req.method === 'GET' && url.pathname === '/google/oauth/callback') {
       return oauthCallback(env, cfg, ec, url);
     }
+    // Search diagnostics: probes every source from the Worker's own network
+    // position. Lightly gated (k = last 8 chars of the Discord public key)
+    // to keep drive-by scanners from triggering upstream fetches.
+    if (req.method === 'GET' && url.pathname === '/diag/search') {
+      if (url.searchParams.get('k') !== env.DISCORD_PUBLIC_KEY.slice(-8)) {
+        return new Response('missing/bad k (last 8 chars of DISCORD_PUBLIC_KEY)', { status: 403 });
+      }
+      const report = await diagnoseSearch(cfg, url.searchParams.get('q') ?? 'frieren');
+      return new Response(JSON.stringify({ build: BUILD, ...report }, null, 2), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (req.method === 'GET' && url.pathname === '/') {
-      return new Response('Anime Exchange bot is running. 🎁', { status: 200 });
+      return new Response(`Anime Exchange bot is running. 🎁 (build ${BUILD})`, { status: 200 });
     }
     return new Response('not found', { status: 404 });
   },

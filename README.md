@@ -166,7 +166,28 @@ Everything happens on the two pinned panels:
 | Private threads without boosts; `Manage Threads` visibility caveat | Yes (documented above) |
 | `drive.file` scope for Sheets/Docs/Drive calls on app-created files | Yes — creation + all follow-up calls are on app-created files; the connected email comes from `drive/v3/about` (no extra scope) |
 | Free plan: 10 ms CPU, 50 subrequests, 1-min cron; D1 ops may count | Designed with headroom (`JOB_BATCH=5`); tune upward on paid |
-| Jikan v4 availability (~3 req/s) | Descriptive `User-Agent` (api.jikan.moe's bot protection 403s UA-less Workers fetches), backed-off retries, 24 h D1 cache; AniList failover for native-script queries **and** whenever Jikan is unreachable (results still resolve to MAL ids) |
+| Jikan v4 availability (~3 req/s) | Three-source chain: official MAL API v2 (primary when `MAL_CLIENT_ID` set) → Jikan (UA + backed-off retries) → AniList; 24 h D1 cache; every outcome logged; `/diag/search` probes all three from the Worker |
+
+## Troubleshooting search ("Search is temporarily unavailable")
+
+That message means **every** search source failed. The usual cause on Workers:
+Jikan (`api.jikan.moe`) and AniList (`graphql.anilist.co`) are both behind
+Cloudflare bot protection, which often 403-challenges traffic from Workers'
+shared egress IPs — no header fixes that.
+
+1. **Set `MAL_CLIENT_ID`** (the real fix). Register a free client id at
+   <https://myanimelist.net/apiconfig> (Create ID → app type "other"), put it
+   in `wrangler.toml` `[vars]`, redeploy. The bot then talks to the official,
+   authenticated MAL API v2 first, which is not subject to those bot walls;
+   Jikan/AniList remain as fallbacks.
+2. **Probe from the Worker itself**:
+   `https://<worker>/diag/search?q=frieren&k=<last 8 chars of DISCORD_PUBLIC_KEY>`
+   returns per-source `ok/error` + timing, plus the running build id — this
+   shows exactly which upstream is failing with what status.
+3. **Check logs**: `npx wrangler tail` — every search logs one line per source
+   attempt (`jikan:ok(20)`, `mal-official:MAL 403`, …).
+4. The health route `/` shows the deployed build id — confirm your deploy
+   actually went out.
 
 ## Development
 

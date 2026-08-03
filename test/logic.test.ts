@@ -3,7 +3,7 @@ import {
   buildLoops, chunkLines, dealSizes, epochToZoned, isValidTz, loopsPhrase, parseReminderDays,
   sanitizeName, shuffled, zonedToEpoch,
 } from '../src/util';
-import { dice, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
+import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
 import { colLetter, headerRow, layoutOf } from '../src/sheet';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
@@ -139,6 +139,32 @@ describe('MAL re-ranking (§9.2: EN, romaji and native script land the same #1)'
     expect(dice('frieren', 'frieren')).toBe(1);
     expect(dice('ab', 'cd')).toBe(0);
     expect(dice('night', 'nacht')).toBeGreaterThan(0);
+  });
+  it('maps official MAL API nodes and ranks them the same', () => {
+    const node = fromMalOfficial({
+      id: 52991,
+      title: 'Sousou no Frieren',
+      alternative_titles: { en: "Frieren: Beyond Journey's End", ja: '葬送のフリーレン', synonyms: ['Frieren at the Funeral'] },
+      main_picture: { medium: 'https://img/m.jpg', large: 'https://img/l.jpg' },
+      media_type: 'tv',
+      num_episodes: 28,
+      start_date: '2023-09-29',
+      num_list_users: 1_200_000,
+    });
+    expect(node.mal_id).toBe(52991);
+    expect(node.title_jp).toBe('葬送のフリーレン');
+    expect(node.year).toBe(2023);
+    expect(node.type).toBe('TV');
+    expect(node.image).toBe('https://img/l.jpg');
+    expect(node.url).toBe('https://myanimelist.net/anime/52991');
+    expect(node.synonyms).toContain("Frieren: Beyond Journey's End");
+    const zeroEps = fromMalOfficial({ id: 1, num_episodes: 0, media_type: 'movie' });
+    expect(zeroEps.episodes).toBeNull(); // MAL uses 0 for unknown
+    expect(zeroEps.type).toBe('Movie');
+    for (const q of ['frieren', '葬送のフリーレン']) {
+      const { norm, cjk } = normalizeQuery(q);
+      expect(rankCandidates(norm, cjk, [node])[0]?.mal_id).toBe(52991);
+    }
   });
 });
 
