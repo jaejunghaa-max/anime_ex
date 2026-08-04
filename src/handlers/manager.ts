@@ -90,7 +90,7 @@ export function basicsModal(c: HCtx): Response {
     modalText('topic', 'Topic', { value: e.topic ?? '', max: 100, placeholder: 'Fall 2026 Exchange: Nostalgia' }),
     modalText('deadline', 'Sign-up deadline (YYYY-MM-DD HH:mm)', {
       value: e.signup_deadline && e.tz ? epochToZoned(e.signup_deadline, e.tz) : '', max: 20,
-      placeholder: '2026-08-01 21:00',
+      placeholder: '2026-09-01 21:00',
     }),
     modalText('tz', 'Timezone (IANA)', { value: e.tz ?? '', max: 50, placeholder: 'America/Chicago' }),
     modalSelect('autostop', 'Auto-stop sign-ups at the deadline?', [
