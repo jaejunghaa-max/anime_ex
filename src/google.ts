@@ -112,11 +112,11 @@ export function fetchConnectedEmail(env: Env, guild: GuildRow): Promise<string |
 
 // ------------------------------------------------------------------ Drive
 
-export interface DriveFileMeta { modifiedTime?: string }
+export interface DriveFileMeta { modifiedTime?: string; createdTime?: string }
 
 export function driveFileMeta(env: Env, guild: GuildRow, fileId: string): Promise<DriveFileMeta> {
   return gapi(env, guild, 'GET',
-    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime`);
+    `https://www.googleapis.com/drive/v3/files/${fileId}?fields=modifiedTime,createdTime`);
 }
 
 export function driveExportText(env: Env, guild: GuildRow, fileId: string): Promise<string> {
