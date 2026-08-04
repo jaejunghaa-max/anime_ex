@@ -109,7 +109,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
     // RUNNING (manager)
     case 'view_event': return mgr.viewEvent(c);
-    case 'refresh': return mgr.refreshStatus(c);
     case 'remind': return arg === 'go' ? mgr.remindNowGo(c) : mgr.remindNow(c);
     case 'close':
       if (arg === 'gallery') return mgr.closeGo(c, true);

@@ -707,17 +707,6 @@ export async function viewEvent(c: HCtx): Promise<Response> {
   });
 }
 
-export async function refreshStatus(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RUNNING');
-  if (!e) return stale(c);
-  const queued = await enqueueJob(c, e.event_id, 'sync');
-  return respond.ephemeral({
-    content: queued
-      ? '🔄 Status sync queued — the panel updates within a minute or two.'
-      : '🔄 A status sync is already running — the panel updates shortly.',
-  });
-}
-
 export async function remindNow(c: HCtx): Promise<Response> {
   const e = needState(c, 'RUNNING');
   if (!e) return stale(c);

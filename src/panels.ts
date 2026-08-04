@@ -208,7 +208,6 @@ export function renderManagerPanel(
         })],
         components: [row(
           btn('ax:view_event', '📊 View Event'),
-          btn('ax:refresh', '🔄 Refresh Status'),
           btn('ax:remind', '📣 Remind Now'),
           btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
           abortBtn(),

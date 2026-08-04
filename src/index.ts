@@ -13,7 +13,7 @@ import { verifyDiscordSignature } from './util';
 
 // Bumped on releases; shown on the health route so "is the new code live?"
 // is answerable from a browser.
-const BUILD = '2.6.6-tz-prefill-min20';
+const BUILD = '2.6.7-no-refresh-btn';
 
 export default {
   async fetch(req: Request, env: Env, ec: ExecutionContext): Promise<Response> {
