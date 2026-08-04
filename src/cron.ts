@@ -18,8 +18,8 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
   if (minute % 15 === 0) {
     await deadlineChecks(env, cfg).catch((e) => console.error('deadline checks', e));
   }
-  if (minute === 0) {
-    // Hourly wrote-detection (§10.3); View Event clicks enqueue on demand.
+  if (minute % 30 === 0) {
+    // Wrote-detection every 30 min; View Event clicks enqueue on demand.
     await enqueuePeriodicSyncs(env).catch((e) => console.error('sync enqueue', e));
   }
 
