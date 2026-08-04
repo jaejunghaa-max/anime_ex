@@ -17,9 +17,9 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
   await repaintDirtyPanels(env, cfg).catch((e) => console.error('dirty panels', e));
   if (minute % 15 === 0) {
     await deadlineChecks(env, cfg).catch((e) => console.error('deadline checks', e));
-    // Wrote-detection cadence: every 15 min (spec §10.3 said hourly, but the
-    // manual Refresh Status button was removed, so the background sync is the
-    // only trigger now). The partial unique index keeps runs from overlapping.
+  }
+  if (minute === 0) {
+    // Hourly wrote-detection (§10.3); View Event clicks enqueue on demand.
     await enqueuePeriodicSyncs(env).catch((e) => console.error('sync enqueue', e));
   }
 

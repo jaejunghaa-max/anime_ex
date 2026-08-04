@@ -679,6 +679,16 @@ export async function launchGo(c: HCtx): Promise<Response> {
 export async function viewEvent(c: HCtx): Promise<Response> {
   const e = needState(c, 'RUNNING', 'LAUNCHING', 'CLOSING');
   if (!e) return stale(c);
+  // Every click doubles as the refresh trigger: show current numbers now,
+  // enqueue a sync so the next look is fresh (batched — §13.1 keeps the
+  // fan-out out of the handler; the dup-enqueue is blocked by the index).
+  let refreshNote = '';
+  if (e.state === 'RUNNING') {
+    const queued = await enqueueJob(c, e.event_id, 'sync');
+    refreshNote = queued
+      ? '\n🔄 Refreshing in the background — click **View Event** again in a minute for updated numbers.'
+      : '\n🔄 A refresh is already running — click **View Event** again shortly.';
+  }
   const rows = await orderedSignups(c.env, e.event_id);
   const lines = rows.map((s) => {
     const scored = s.score !== null ? ` · ⭐ ${s.score}/10` : '';
@@ -702,7 +712,7 @@ export async function viewEvent(c: HCtx): Promise<Response> {
     embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
   }
   return respond.ephemeral({
-    content: `📊 **${e.topic}** — ${rows.filter((r) => r.wrote).length}/${rows.length} started writing.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+    content: `📊 **${e.topic}** — ${rows.filter((r) => r.wrote).length}/${rows.length} started writing.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}${refreshNote}`,
     embeds,
   });
 }
