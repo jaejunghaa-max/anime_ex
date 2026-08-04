@@ -29,7 +29,12 @@ async function healSheet(env: Env, guild: GuildRow, event: EventRow): Promise<vo
   });
 }
 
-const WROTE_GRACE_S = 60;
+// "Started writing" = at least this many chars beyond the template. The
+// spec's extra `modifiedTime > createdTime + 60s` grace clause is deliberately
+// NOT applied: template inflation is already neutralized by subtracting
+// template_chars, and the clause permanently false-negatived anyone whose
+// last edit fell within a minute of doc creation — exactly what eager
+// participants do when the assignment ping arrives.
 const WROTE_MIN_CHARS = 50;
 
 // ------------------------------------------------------------- dispatcher
@@ -369,12 +374,15 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
       throw e;
     }
     const mtime = meta.modifiedTime ? Math.floor(Date.parse(meta.modifiedTime) / 1000) : null;
-    const ctime = meta.createdTime ? Math.floor(Date.parse(meta.createdTime) / 1000) : null;
 
     if (mtime !== null && s.last_edited === mtime && s.synced_at !== null) {
-      // Cheap path: unchanged since last sync (§8.5 step 1).
-      stmts.push(env.DB.prepare('UPDATE signups SET synced_at = ?1, doc_missing = 0 WHERE signup_id = ?2')
-        .bind(now(), s.signup_id));
+      // Cheap path: unchanged since last sync (§8.5 step 1). Still re-derive
+      // wrote from the stored char_count so rows synced under the old
+      // grace-clause formula heal without waiting for another doc edit.
+      const wrote = s.char_count >= WROTE_MIN_CHARS ? 1 : 0;
+      if (wrote !== s.wrote) wroteChanged = true;
+      stmts.push(env.DB.prepare('UPDATE signups SET wrote = ?1, synced_at = ?2, doc_missing = 0 WHERE signup_id = ?3')
+        .bind(wrote, now(), s.signup_id));
       continue;
     }
 
@@ -382,7 +390,7 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
     const chars = Math.max(0, text.length - s.template_chars);
     // wrote stays internal (drives reminders + the progress panel) even
     // though it no longer has a sheet column.
-    const wrote = mtime !== null && ctime !== null && mtime > ctime + WROTE_GRACE_S && chars >= WROTE_MIN_CHARS ? 1 : 0;
+    const wrote = chars >= WROTE_MIN_CHARS ? 1 : 0;
     if (wrote !== s.wrote) wroteChanged = true;
     stmts.push(env.DB.prepare(
       'UPDATE signups SET last_edited = ?1, char_count = ?2, wrote = ?3, doc_missing = 0, synced_at = ?4, updated_at = ?4 WHERE signup_id = ?5',
