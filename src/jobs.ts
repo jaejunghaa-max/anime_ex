@@ -243,12 +243,15 @@ async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: Sign
     for (const i of members) {
       const s = all[i]!;
       const recipient = all[loops.recipient[i]!]!;
-      // "@J recommended X → received 7 stars from @rabbit (read review)"
+      // "J (@J) recommended X → received 7 stars from rabbit (@rabbit) (read review)"
       const link = recipient.doc_url ? ` ([read review](${recipient.doc_url}))` : '';
       const verdict = recipient.score !== null
         ? `received **⭐ ${recipient.score} stars** from`
         : 'reviewed by';
-      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → ${verdict} <@${recipient.user_id}>${link}`);
+      lines.push(
+        `🎁 **${s.display_name}** (<@${s.user_id}>) recommended **${s.anime_title}** → ` +
+        `${verdict} **${recipient.display_name}** (<@${recipient.user_id}>)${link}`,
+      );
     }
   }
   // ≤10 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
