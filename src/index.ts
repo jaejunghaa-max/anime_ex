@@ -13,7 +13,7 @@ import { verifyDiscordSignature } from './util';
 
 // Bumped on releases; shown on the health route so "is the new code live?"
 // is answerable from a browser.
-const BUILD = '2.6.5-reverted-wrote-saga';
+const BUILD = '2.6.6-tz-prefill-min20';
 
 export default {
   async fetch(req: Request, env: Env, ec: ExecutionContext): Promise<Response> {

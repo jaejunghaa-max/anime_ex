@@ -19,6 +19,8 @@ import {
 import { bg, HCtx, repaint, stale } from './common';
 
 const MAX_ITEMS = 9;
+// Pre-filled in the Set Basics / Launch timezone fields (still editable).
+const DEFAULT_TZ = 'America/Chicago';
 
 // --------------------------------------------------------------- helpers
 
@@ -92,7 +94,7 @@ export function basicsModal(c: HCtx): Response {
       value: e.signup_deadline && e.tz ? epochToZoned(e.signup_deadline, e.tz) : '', max: 20,
       placeholder: '2026-09-01 21:00',
     }),
-    modalText('tz', 'Timezone (IANA)', { value: e.tz ?? '', max: 50, placeholder: 'America/Chicago' }),
+    modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
     modalSelect('autostop', 'Auto-stop sign-ups at the deadline?', [
       { label: 'No — I will stop sign-ups manually', value: '0', default: !e.auto_stop },
       { label: 'Yes — close sign-ups automatically', value: '1', default: !!e.auto_stop },
@@ -581,7 +583,7 @@ export function launchModal(c: HCtx): Response {
       value: e.review_deadline && e.tz ? epochToZoned(e.review_deadline, e.tz) : '',
       max: 20, placeholder: '2026-10-01 21:00',
     }),
-    modalText('tz', 'Timezone (IANA)', { value: e.tz ?? '', max: 50, placeholder: 'Asia/Seoul' }),
+    modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
     modalText('days', 'Reminder days before deadline', {
       value: e.reminder_days || '7,3,1', max: 30, required: false,
       description: 'Comma-separated, e.g. 7,3,1 — empty for none',

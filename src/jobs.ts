@@ -30,7 +30,7 @@ async function healSheet(env: Env, guild: GuildRow, event: EventRow): Promise<vo
 }
 
 const WROTE_GRACE_S = 60;
-const WROTE_MIN_CHARS = 50;
+const WROTE_MIN_CHARS = 20;
 
 // ------------------------------------------------------------- dispatcher
 
