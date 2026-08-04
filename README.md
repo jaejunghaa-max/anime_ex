@@ -7,6 +7,9 @@ circular loops — one big loop over everyone by default, or several smaller
 loops if the manager splits participants into **groups**. The recommender's
 identity stays secret until the reveal.
 
+**[MANUAL.md](MANUAL.md) is the day-to-day user guide** (managers &
+participants); this README covers architecture and deployment.
+
 Implements **[Specification v2, rev. 3](.)** — one event per guild, all state in
 Cloudflare **D1**, all Google artifacts in the **manager's own Drive** (OAuth,
 `drive.file` scope only), designed to fit the **Workers Free plan** budget.
