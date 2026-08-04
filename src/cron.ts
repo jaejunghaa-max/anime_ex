@@ -17,9 +17,10 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
   await repaintDirtyPanels(env, cfg).catch((e) => console.error('dirty panels', e));
   if (minute % 15 === 0) {
     await deadlineChecks(env, cfg).catch((e) => console.error('deadline checks', e));
-  }
-  if (minute === 0) {
-    await enqueueHourlySyncs(env).catch((e) => console.error('hourly sync enqueue', e));
+    // Wrote-detection cadence: every 15 min (spec §10.3 said hourly, but the
+    // manual Refresh Status button was removed, so the background sync is the
+    // only trigger now). The partial unique index keeps runs from overlapping.
+    await enqueuePeriodicSyncs(env).catch((e) => console.error('sync enqueue', e));
   }
 
   // Fan-out: due reminder messages first (time-sensitive), else one job batch.
@@ -82,9 +83,9 @@ async function deadlineChecks(env: Env, cfg: Cfg): Promise<void> {
   }
 }
 
-// ------------------------------------------------------- hourly sync enqueue
+// ----------------------------------------------------- periodic sync enqueue
 
-async function enqueueHourlySyncs(env: Env): Promise<void> {
+async function enqueuePeriodicSyncs(env: Env): Promise<void> {
   const running = await env.DB.prepare("SELECT event_id FROM events WHERE state = 'RUNNING'")
     .all<{ event_id: number }>();
   for (const e of running.results) {

@@ -413,7 +413,7 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
   ).bind(event.event_id, job.created_at).first<{ n: number }>();
   if ((left?.n ?? 0) === 0) {
     await markDone(env, job);
-    await healSheet(env, guild, event); // hourly convergence for the whole sheet
+    await healSheet(env, guild, event); // periodic convergence for the whole sheet
   }
   if (wroteChanged || (left?.n ?? 0) === 0) {
     await repaintPanels(env, cfg, guild.guild_id); // progress fraction changed (§8.5)
