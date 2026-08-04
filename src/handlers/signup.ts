@@ -168,8 +168,10 @@ export async function signupModalA(c: HCtx): Promise<Response> {
       chosen_json: prevDraft?.chosen_json ?? null,
     });
     if (searchFailed) {
+      // Also fires on keyword-shaped failures (e.g. the official MAL API
+      // rejects queries under 3 characters), so suggest both remedies.
       await editOriginal(c.env, c.i.token, {
-        content: '⚠ Search is temporarily unavailable — try again in a minute.',
+        content: '⚠ Try a different keyword — or try again in a minute.',
         embeds: [],
         components: [row(btn('ax:signup_again', '🔍 Search again', Style.PRIMARY))],
       });
