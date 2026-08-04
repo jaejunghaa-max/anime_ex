@@ -13,7 +13,7 @@ import { verifyDiscordSignature } from './util';
 
 // Bumped on releases; shown on the health route so "is the new code live?"
 // is answerable from a browser.
-const BUILD = '2.6.8-search-msg';
+const BUILD = '2.6.9-no-grace';
 
 export default {
   async fetch(req: Request, env: Env, ec: ExecutionContext): Promise<Response> {

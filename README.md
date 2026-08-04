@@ -125,8 +125,8 @@ Everything happens on the two pinned panels:
    thread `🎁 {name}`, and an assignment card with the doc link plus a
    **⭐ Score it /10** button. The panel counts up (~n/`JOB_BATCH` minutes)
    and flips to RUNNING by itself.
-5. During RUNNING: hourly wrote-detection (modifiedTime + char count vs the
-   doc template — internal; the sheet shows a **Review Length** column),
+5. During RUNNING: hourly wrote-detection (chars written beyond the doc
+   template — internal; the sheet shows a **Review Length** column),
    progress panel, scheduled reminders (thread ping, optional DM mirror),
    **Remind Now** for laggards. Participants can score their given anime out
    of 10 any time until Close (re-scoring allowed); scores land in the
