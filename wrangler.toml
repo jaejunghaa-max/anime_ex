@@ -33,7 +33,7 @@ MAL_CLIENT_ID = "0b17b0153ce210443a904e98ff279a1d"
 [[d1_databases]]
 binding = "DB"
 database_name = "anime-exchange"
-database_id = "2a130e91-f5a4-42a9-b89d-7e0bb4fc5fac"
+database_id = "d1979187-f851-4749-a40b-6986c55cb86b"
 migrations_dir = "migrations"
 
 [triggers]
