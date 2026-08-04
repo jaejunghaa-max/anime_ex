@@ -213,7 +213,11 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 
 function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Record<string, unknown> {
   const reviewTitle = `Review of ${me.anime_title} by ${recipient.display_name}`;
-  const scored = recipient.score !== null ? ` and scored it **⭐ ${recipient.score}/10**` : '';
+  // "{name} (@name) gave your recommendation {anime} 8 stars:" — falls back to
+  // review-only phrasing when they never scored.
+  const verdict = recipient.score !== null
+    ? `gave your recommendation **${me.anime_title}** **⭐ ${recipient.score} stars**`
+    : `reviewed your recommendation **${me.anime_title}**`;
   return {
     content: `<@${me.user_id}> the reveal is here! 🎭`,
     embeds: [embed({
@@ -221,8 +225,8 @@ function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Reco
       description:
         `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>) — ` +
         `they recommended **${santa.anime_title}** for you.\n\n` +
-        `**${recipient.display_name}** (<@${recipient.user_id}>) reviewed your recommendation ` +
-        `**${me.anime_title}**${scored}${recipient.doc_url ? ':' : ' — but their review doc is missing.'}`,
+        `**${recipient.display_name}** (<@${recipient.user_id}>) ${verdict}` +
+        `${recipient.doc_url ? ':' : ' — but their review doc is missing.'}`,
     })],
     components: recipient.doc_url ? [row(linkBtn(recipient.doc_url, `📖 ${truncate(reviewTitle, 70)}`))] : [],
   };
@@ -239,9 +243,12 @@ async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: Sign
     for (const i of members) {
       const s = all[i]!;
       const recipient = all[loops.recipient[i]!]!;
-      const link = recipient.doc_url ? ` ([review](${recipient.doc_url}))` : '';
-      const scored = recipient.score !== null ? ` · ⭐ ${recipient.score}/10` : '';
-      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → reviewed by <@${recipient.user_id}>${link}${scored}`);
+      // "@J recommended X → received 7 stars from @rabbit (read review)"
+      const link = recipient.doc_url ? ` ([read review](${recipient.doc_url}))` : '';
+      const verdict = recipient.score !== null
+        ? `received **⭐ ${recipient.score} stars** from`
+        : 'reviewed by';
+      lines.push(`🎁 <@${s.user_id}> recommended **${s.anime_title}** → ${verdict} <@${recipient.user_id}>${link}`);
     }
   }
   // ≤10 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
