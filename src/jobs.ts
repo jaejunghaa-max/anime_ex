@@ -35,7 +35,7 @@ async function healSheet(env: Env, guild: GuildRow, event: EventRow): Promise<vo
 // template_chars, and the clause permanently false-negatived anyone whose
 // last edit fell within a minute of doc creation — exactly what eager
 // participants do when the assignment ping arrives.
-const WROTE_MIN_CHARS = 50;
+const WROTE_MIN_CHARS = 20;
 
 // ------------------------------------------------------------- dispatcher
 
