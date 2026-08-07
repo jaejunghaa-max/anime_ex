@@ -14,16 +14,17 @@ export interface Env {
   MAX_PARTICIPANTS?: string;
   JOB_BATCH?: string;
   REMINDERS_PER_TICK?: string;
-  ANILIST_FALLBACK?: string;
   SFW_ONLY?: string;
+  MAL_CLIENT_ID?: string;
 }
 
 export interface Cfg {
   maxParticipants: number;
   jobBatch: number;
   remindersPerTick: number;
-  anilistFallback: boolean;
   sfwOnly: boolean;
+  /** Official MAL API v2 client id — primary search source when set. */
+  malClientId: string | null;
 }
 
 export function cfgOf(env: Env): Cfg {
@@ -35,8 +36,8 @@ export function cfgOf(env: Env): Cfg {
     maxParticipants: int(env.MAX_PARTICIPANTS, 100),
     jobBatch: int(env.JOB_BATCH, 5),
     remindersPerTick: int(env.REMINDERS_PER_TICK, 30),
-    anilistFallback: (env.ANILIST_FALLBACK ?? 'true') !== 'false',
     sfwOnly: (env.SFW_ONLY ?? 'true') !== 'false',
+    malClientId: env.MAL_CLIENT_ID?.trim() || null,
   };
 }
 
@@ -73,7 +74,7 @@ export interface EventRow {
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
-  loop_status: 'none' | 'shuffled' | 'manual';
+  loop_status: 'none' | 'shuffled' | 'manual'; // unused since rev. 3 (column kept; panel shows the loops summary instead)
   validated_at: number | null;
   count_panel_at: number;
   panel_dirty: number;
@@ -106,6 +107,7 @@ export interface SignupRow {
   anime_image: string | null;
   answers_json: string;
   row_order: number | null;
+  group_no: number;
   thread_id: string | null;
   doc_id: string | null;
   doc_url: string | null;
@@ -120,6 +122,7 @@ export interface SignupRow {
   wrote: number;
   last_edited: number | null;
   char_count: number;
+  score: number | null; // participant's /10 rating of their given anime
   created_at: number;
   updated_at: number;
 }

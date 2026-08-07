@@ -1,13 +1,24 @@
-// Sheet layout + rewrite/read helpers (spec §8.3). The sheet's row order IS
-// the loop; the derived Santa/Given block is always overwritten by the bot
-// and never read back as input (decision #6/#7).
+// Sheet layout + rewrite/read helpers (spec §8.3). The sheet's row order and
+// its manager-editable Group column ARE the assignment (rows = loop order,
+// Group = loop membership); the derived Santa/Given block is always
+// overwritten by the bot and never read back as input (decision #6/#7).
 
 import type { Env, EventRow, FormItem, GuildRow, SignupRow } from './types';
 import {
   SHEET_TAB, addHeaderNotes, valuesBatchUpdate, valuesClear, valuesGet, valuesUpdate,
 } from './google';
 import { answersOf } from './db';
-import { epochToZoned, santaIndex } from './util';
+import { buildLoops, type LoopMap } from './util';
+
+/**
+ * A1 range on the data tab. The tab title contains a hyphen, which Google's
+ * A1 parser only accepts when the title is single-quoted — unquoted,
+ * `Sign-Ups!A1:T21` 400s with "Unable to parse range", which silently
+ * starved every sheet write while the spreadsheet itself created fine.
+ */
+export function a1(range: string): string {
+  return `'${SHEET_TAB}'!${range}`;
+}
 
 /** 1-indexed column number → A1 letter(s). */
 export function colLetter(n: number): string {
@@ -25,12 +36,12 @@ const FIXED = 5; // A Row#, B User ID, C Username, D Anime, E MAL
 
 export interface Layout {
   itemCount: number;
+  groupCol: number;
   santaCol: number;
   givenCol: number;
   linkCol: number;
-  editedCol: number;
-  charsCol: number;
-  wroteCol: number;
+  lengthCol: number;
+  scoreCol: number;
   lastCol: number;
 }
 
@@ -38,12 +49,12 @@ export function layoutOf(items: FormItem[]): Layout {
   const k = items.length;
   return {
     itemCount: k,
-    santaCol: FIXED + k + 1,
-    givenCol: FIXED + k + 2,
-    linkCol: FIXED + k + 3,
-    editedCol: FIXED + k + 4,
-    charsCol: FIXED + k + 5,
-    wroteCol: FIXED + k + 6,
+    groupCol: FIXED + k + 1, // manager-editable loop membership (§8.3)
+    santaCol: FIXED + k + 2,
+    givenCol: FIXED + k + 3,
+    linkCol: FIXED + k + 4,
+    lengthCol: FIXED + k + 5, // "Review Length" — body chars minus template
+    scoreCol: FIXED + k + 6,  // participant's /10 score of their given anime
     lastCol: FIXED + k + 6,
   };
 }
@@ -52,7 +63,7 @@ export function headerRow(items: FormItem[]): string[] {
   return [
     'Row #', 'User ID 🔑', 'Username', 'Anime', 'MAL',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Secret Santa', 'Given Anime', 'Review Link', 'Last Edited', 'Chars', 'Wrote',
+    'Group', 'Secret Santa', 'Given Anime', 'Review Link', 'Review Length', 'Score',
   ];
 }
 
@@ -60,16 +71,20 @@ export function animeCell(s: SignupRow): string {
   return s.anime_year ? `${s.anime_title} (${s.anime_year})` : s.anime_title;
 }
 
-export function wroteCell(s: SignupRow): string {
-  if (s.doc_missing) return '❌ (missing)';
-  return s.wrote ? '✅' : '❌';
+/** Review Length cell: chars written beyond the template; flags deleted docs. */
+export function lengthCell(s: Pick<SignupRow, 'doc_id' | 'doc_missing' | 'char_count'>): string | number {
+  if (s.doc_missing) return '⚠ missing';
+  return s.doc_id ? s.char_count : '';
+}
+
+export function scoreCell(s: Pick<SignupRow, 'score'>): string | number {
+  return s.score ?? '';
 }
 
 function dataRow(
-  s: SignupRow, idx: number, ordered: SignupRow[], items: FormItem[], event: EventRow, derived: boolean,
+  s: SignupRow, idx: number, santa: SignupRow | undefined, items: FormItem[],
 ): unknown[] {
   const answers = answersOf(s);
-  const santa = derived ? ordered[santaIndex(idx, ordered.length)] : undefined;
   return [
     idx + 1,
     s.user_id, // RAW valueInputOption keeps the 18-digit id a string (precision!)
@@ -77,19 +92,22 @@ function dataRow(
     animeCell(s),
     s.anime_url,
     ...items.map((it) => answers[String(it.item_id)] ?? ''),
+    s.group_no,
     santa ? santa.display_name : '',
     santa ? animeCell(santa) : '',
     s.doc_url ?? '',
-    s.last_edited ? epochToZoned(s.last_edited, event.tz ?? 'UTC') : '',
-    s.doc_id ? s.char_count : '',
-    s.doc_id ? wroteCell(s) : '',
+    lengthCell(s),
+    scoreCell(s),
   ];
 }
 
 /**
- * Clear + rewrite the whole data block from D1 (idempotent, used by signup
- * upsert/withdraw, Shuffle, Validate, restore). Derived columns are filled
- * once the loop order has been adopted (row_order non-NULL).
+ * Clear + rewrite the header and data block from D1 (idempotent, used by
+ * signup upsert/withdraw, Shuffle, Grouping, Validate, restore). Including
+ * the header row makes layout changes self-heal on sheets created by older
+ * deployments; the clear range sweeps a few extra columns for the same
+ * reason. Derived columns fill per group once the loop order has been
+ * adopted (row_order non-NULL).
  */
 export async function rewriteSheet(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], ordered: SignupRow[],
@@ -97,11 +115,14 @@ export async function rewriteSheet(
   if (!event.sheet_id) return;
   const layout = layoutOf(items);
   const derived = ordered.length >= 2 && ordered.every((s) => s.row_order !== null);
+  const loops: LoopMap | null = derived ? buildLoops(ordered.map((s) => s.group_no)) : null;
   const end = colLetter(layout.lastCol);
-  await valuesClear(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}1000`);
-  if (ordered.length === 0) return;
-  const values = ordered.map((s, i) => dataRow(s, i, ordered, items, event, derived));
-  await valuesUpdate(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${end}${ordered.length + 1}`, values);
+  await valuesClear(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol + 3)}1000`));
+  const values = [
+    headerRow(items),
+    ...ordered.map((s, i) => dataRow(s, i, loops ? ordered[loops.santa[i]!] : undefined, items)),
+  ];
+  await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${end}${ordered.length + 1}`), values);
 }
 
 export async function writeHeader(
@@ -109,15 +130,18 @@ export async function writeHeader(
 ): Promise<void> {
   if (!event.sheet_id) return;
   const header = headerRow(items);
-  await valuesUpdate(env, guild, event.sheet_id,
-    `${SHEET_TAB}!A1:${colLetter(header.length)}1`, [header]);
+  await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${colLetter(header.length)}1`), [header]);
   if (event.sheet_gid !== null) {
     const layout = layoutOf(items);
     await addHeaderNotes(env, guild, event.sheet_id, event.sheet_gid, [
       { colIndex: 1, note: 'Immutable key — do not edit this column.' },
       {
+        colIndex: layout.groupCol - 1,
+        note: 'Loop membership — positive integer, blank = 1. Edit to move someone between loops; rows re-sort into contiguous group blocks on Validate.',
+      },
+      {
         colIndex: layout.santaCol - 1,
-        note: 'Auto-derived from row order — reorder rows to change assignments; this block is overwritten on every Validate/Shuffle/Launch.',
+        note: 'Auto-derived: the next row within the group. Reorder rows / edit Group to change assignments; this block is overwritten on every Shuffle/Grouping/Validate/Launch.',
       },
     ]).catch(() => { /* cosmetic */ });
   }
@@ -129,7 +153,7 @@ export async function readSheetRows(
 ): Promise<string[][]> {
   if (!event.sheet_id) return [];
   const layout = layoutOf(items);
-  return valuesGet(env, guild, event.sheet_id, `${SHEET_TAB}!A2:${colLetter(layout.lastCol)}1000`);
+  return valuesGet(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol)}1000`));
 }
 
 /** Batched per-tick cell writes: Review Link during Launch (§7.5). */
@@ -140,22 +164,31 @@ export function writeReviewLinks(
   if (!event.sheet_id || rows.length === 0) return Promise.resolve();
   const col = colLetter(layoutOf(items).linkCol);
   return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: `${SHEET_TAB}!${col}${r.rowIndex + 2}`,
+    range: a1(`${col}${r.rowIndex + 2}`),
     values: [[r.url]],
   })));
 }
 
-/** Batched per-tick cell writes: Last Edited / Chars / Wrote during sync (§8.5). */
-export function writeSyncCells(
+/** Batched per-tick cell writes: Review Length + Score during sync (§8.5). */
+export function writeStatusCells(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
-  rows: Array<{ rowIndex: number; edited: string; chars: number | string; wrote: string }>,
+  rows: Array<{ rowIndex: number; length: number | string; score: number | string }>,
 ): Promise<unknown> {
   if (!event.sheet_id || rows.length === 0) return Promise.resolve();
   const layout = layoutOf(items);
-  const from = colLetter(layout.editedCol);
-  const to = colLetter(layout.wroteCol);
+  const from = colLetter(layout.lengthCol);
+  const to = colLetter(layout.scoreCol);
   return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: `${SHEET_TAB}!${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`,
-    values: [[r.edited, r.chars, r.wrote]],
+    range: a1(`${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`),
+    values: [[r.length, r.score]],
   })));
+}
+
+/** Single-cell Score write when a participant submits their /10 rating. */
+export function writeScoreCell(
+  env: Env, guild: GuildRow, event: EventRow, items: FormItem[], rowIndex: number, score: number,
+): Promise<unknown> {
+  if (!event.sheet_id) return Promise.resolve();
+  const col = colLetter(layoutOf(items).scoreCol);
+  return valuesUpdate(env, guild, event.sheet_id, a1(`${col}${rowIndex + 2}`), [[score]]);
 }

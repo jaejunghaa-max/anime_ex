@@ -9,8 +9,8 @@ import type { DraftRow, FormItem } from '../types';
 import { modalFields } from '../types';
 import { btn, editOriginal, embed, linkBtn, modalSelect, modalText, respond, row, stringSelect, Style } from '../discord';
 import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
-import { rewriteSheet } from '../sheet';
-import { now, truncate } from '../util';
+import { rewriteSheet, writeScoreCell } from '../sheet';
+import { buildLoops, now, truncate } from '../util';
 import { bg, HCtx, repaint, stale, throttledCountRepaint } from './common';
 
 const DRAFT_TTL = 30 * 60;
@@ -168,8 +168,10 @@ export async function signupModalA(c: HCtx): Promise<Response> {
       chosen_json: prevDraft?.chosen_json ?? null,
     });
     if (searchFailed) {
+      // Also fires on keyword-shaped failures (e.g. the official MAL API
+      // rejects queries under 3 characters), so suggest both remedies.
       await editOriginal(c.env, c.i.token, {
-        content: '⚠ Search is temporarily unavailable — try again in a minute.',
+        content: '⚠ Try a different keyword — or try again in a minute.',
         embeds: [],
         components: [row(btn('ax:signup_again', '🔍 Search again', Style.PRIMARY))],
       });
@@ -365,6 +367,62 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
     });
   });
   return respond.deferUpdate();
+}
+
+// ------------------------------------------------------------------- score
+// The ⭐ button on the assignment card (private thread). Scores are keyed to
+// the clicking user's own signup (§13.2 — never trusted from the payload),
+// so it always rates the anime *they* were given, out of 10.
+
+const SCORE_STATES = ['LAUNCHING', 'RUNNING'] as const;
+
+export async function scoreModal(c: HCtx): Promise<Response> {
+  const e = c.event;
+  if (!e || !SCORE_STATES.includes(e.state as (typeof SCORE_STATES)[number])) {
+    return stale(c, e && ['CLOSING', 'REVEALED'].includes(e.state)
+      ? 'Reviews are closed — scores are locked in.' : 'Scoring is open while the event is running.');
+  }
+  const me = await getSignup(c.env, e.event_id, c.userId);
+  if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
+  return respond.modal('axm:score', 'Score your given anime', [
+    modalSelect('score', 'Your score out of 10',
+      Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => ({
+        label: `${'⭐'.repeat(Math.ceil(n / 2))} ${n} / 10`,
+        value: String(n),
+        default: me.score === n,
+      })),
+      { placeholder: me.score !== null ? `Current: ${me.score}/10` : 'Pick a score…' },
+    ),
+  ]);
+}
+
+export async function scoreSubmit(c: HCtx): Promise<Response> {
+  const e = c.event;
+  if (!e || !SCORE_STATES.includes(e.state as (typeof SCORE_STATES)[number])) {
+    return stale(c, 'Reviews are closed — scores are locked in.');
+  }
+  const me = await getSignup(c.env, e.event_id, c.userId);
+  if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
+  const v = parseInt(modalFields(c.i.data?.components).get('score') ?? '', 10);
+  if (!(v >= 1 && v <= 10)) return respond.ephemeral({ content: '⚠ Score must be between 1 and 10.' });
+  await c.env.DB.prepare('UPDATE signups SET score = ?1, updated_at = ?2 WHERE signup_id = ?3')
+    .bind(v, now(), me.signup_id).run();
+  bg(c, async () => {
+    const all = await orderedSignups(c.env, e.event_id);
+    const idx = all.findIndex((s) => s.signup_id === me.signup_id);
+    const santa = idx >= 0 ? all[buildLoops(all.map((s) => s.group_no)).santa[idx]!] : undefined;
+    if (me.row_order !== null) {
+      // Best-effort sheet cell; the hourly sync self-heals it if this fails.
+      const items = await getItems(c.env, e.event_id);
+      await writeScoreCell(c.env, c.guild, e, items, me.row_order, v).catch((err) => {
+        console.error('score cell write failed (sync will heal)', err);
+      });
+    }
+    await editOriginal(c.env, c.i.token, {
+      content: `⭐ Saved — you scored **${santa?.anime_title ?? 'your given anime'}** **${v}/10**. You can change it until reviews close.`,
+    });
+  });
+  return respond.deferEphemeral();
 }
 
 // ----------------------------------------------------------------- withdraw

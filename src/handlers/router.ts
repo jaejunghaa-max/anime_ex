@@ -14,9 +14,9 @@ import * as su from './signup';
 // Actions any member may use; everything else under ax:/axm: is manager-only (§13.2).
 const PARTICIPANT_ACTIONS = new Set([
   'signup', 'signup_pick', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart',
-  'edit_signup', 'withdraw', 'cancel',
+  'edit_signup', 'withdraw', 'score', 'cancel',
 ]);
-const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b']);
+const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score']);
 
 export async function routeInteraction(
   env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction,
@@ -71,9 +71,11 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     switch (action) {
       case 'basics': return mgr.basicsSubmit(c);
       case 'item': return mgr.itemSubmit(c, arg);
+      case 'grouping': return mgr.groupingSubmit(c);
       case 'launch': return mgr.launchSubmit(c);
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
+      case 'score': return su.scoreSubmit(c);
       default: return stale(c, 'This form is from an older version.');
     }
   }
@@ -100,13 +102,13 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'stop': return arg === 'go' ? mgr.stopSignupsGo(c) : mgr.stopSignups(c);
     case 'reopen': return arg === 'go' ? mgr.reopenSignupsGo(c) : mgr.reopenSignups(c);
     case 'shuffle': return mgr.shuffle(c);
+    case 'grouping': return mgr.groupingModal(c);
     case 'validate': return mgr.validate(c);
     case 'rm_confirm': return mgr.removalConfirm(c, arg);
     case 'rm_restore': return mgr.removalRestore(c, arg);
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
     // RUNNING (manager)
     case 'view_event': return mgr.viewEvent(c);
-    case 'refresh': return mgr.refreshStatus(c);
     case 'remind': return arg === 'go' ? mgr.remindNowGo(c) : mgr.remindNow(c);
     case 'close':
       if (arg === 'gallery') return mgr.closeGo(c, true);
@@ -114,6 +116,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       return mgr.closeReviews(c);
     // REVEALED (manager)
     case 'finish': return arg === 'go' ? mgr.finishGo(c) : mgr.finish(c);
+    // any non-IDLE state (manager)
+    case 'abort': return arg === 'go' ? mgr.abortGo(c) : mgr.abort(c);
     // participant wizard
     case 'signup': return su.signupStart(c, false);
     case 'edit_signup': return su.signupStart(c, true);
@@ -122,6 +126,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_confirm': return su.signupConfirm(c);
+    case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
     default:
       return stale(c, 'This control is from an older version of the panel.');

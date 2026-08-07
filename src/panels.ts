@@ -5,7 +5,7 @@
 import type { Cfg, Env, EventRow, GuildRow, JobRow } from './types';
 import { btn, editMessage, embed, linkBtn, row, Style } from './discord';
 import { isConnected, sheetUrl } from './google';
-import { ts } from './util';
+import { loopsPhrase, ts } from './util';
 
 export interface PanelStats {
   count: number;
@@ -14,13 +14,15 @@ export interface PanelStats {
   revealed: number;
   started: number;
   threadsLeft: number;
+  /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
+  groupSizes: number[];
   lastSync: number | null;
   activeJob: JobRow | null;
 }
 
 export async function panelStats(env: Env, event: EventRow | null): Promise<PanelStats> {
   if (!event) {
-    return { count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0, lastSync: null, activeJob: null };
+    return { count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0, groupSizes: [], lastSync: null, activeJob: null };
   }
   const agg = await env.DB.prepare(
     `SELECT COUNT(*) AS count,
@@ -37,6 +39,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   const lastSync = await env.DB
     .prepare("SELECT done_at FROM jobs WHERE event_id = ?1 AND kind = 'sync' AND done_at IS NOT NULL ORDER BY id DESC LIMIT 1")
     .bind(event.event_id).first<{ done_at: number }>();
+  const groups = await env.DB
+    .prepare('SELECT COUNT(*) AS c FROM signups WHERE event_id = ?1 GROUP BY group_no ORDER BY group_no')
+    .bind(event.event_id).all<{ c: number }>();
   return {
     count: agg?.count ?? 0,
     launched: agg?.launched ?? 0,
@@ -44,6 +49,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     revealed: agg?.revealed ?? 0,
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
+    groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
   };
@@ -63,6 +69,15 @@ function stallLine(job: JobRow | null): string {
   }
   return '';
 }
+
+/** Shown while an abort's finish job is tearing threads down. */
+function abortingLine(stats: PanelStats): string {
+  return stats.activeJob?.kind === 'finish'
+    ? `\n🛑 Aborting — ${stats.threadsLeft} thread(s) left to remove; panels reset when done.`
+    : '';
+}
+
+const abortBtn = () => btn('ax:abort', '🛑 Abort', Style.DANGER);
 
 const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google' : '🔗 Connect Google');
 
@@ -120,6 +135,7 @@ export function renderManagerPanel(
             btn('ax:google', googleBtnLabel(guild)),
             btn('ax:open', '📨 Open Sign-Ups', Style.SUCCESS),
             btn('ax:discard', '🗑 Discard', Style.DANGER),
+            abortBtn(),
           ),
         ],
       };
@@ -136,26 +152,32 @@ export function renderManagerPanel(
         })],
         components: [row(
           btn('ax:view_signups', '📋 View Sign-Ups'),
-          btn('ax:stop', '🛑 Stop Sign-Ups', Style.DANGER),
+          btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
+          abortBtn(),
         )],
       };
     case 'MATCHING': {
-      const loop =
-        e.loop_status === 'none' ? 'not yet shuffled'
-        : e.loop_status === 'shuffled' ? 'shuffled'
-        : 'manually reordered';
-      const validated = e.validated_at ? ` — last validated ${ts(e.validated_at, 'R')}` : '';
+      // Loops summary as of the last adoption into D1 (rev. 3 §5.4).
+      const loops = stats.groupSizes.length <= 1
+        ? 'single'
+        : `${stats.groupSizes.length} groups (${stats.groupSizes.join(' + ')})`;
+      const validated = e.validated_at ? `last validated ${ts(e.validated_at, 'R')}` : 'not validated yet';
       return {
         content: '',
         embeds: [embed({
           title: `🔀 Matching — ${e.topic}`,
           description:
-            `**${stats.count}** participants\n**Loop:** ${loop}${validated}\n` +
-            `Reorder rows in the sheet to hand-tune assignments, then **Validate**.\n${googleLine(guild)}`,
+            `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
+            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate**.\n${googleLine(guild)}`,
         })],
         components: [
-          row(...[sheetBtn, btn('ax:shuffle', '🔀 Shuffle'), btn('ax:validate', '✅ Validate')].filter(Boolean) as unknown[]),
-          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS)),
+          row(...[
+            sheetBtn,
+            btn('ax:grouping', '🧩 Grouping'),
+            btn('ax:shuffle', '🔀 Shuffle'),
+            btn('ax:validate', '✅ Validate'),
+          ].filter(Boolean) as unknown[]),
+          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS), abortBtn()),
         ],
       };
     }
@@ -168,9 +190,9 @@ export function renderManagerPanel(
           title: `🚀 Launching — ${e.topic}`,
           description:
             `**${stats.launched} / ${stats.count}** assignments delivered · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: sheetBtn ? [row(sheetBtn)] : [],
+        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     case 'RUNNING': {
@@ -182,13 +204,13 @@ export function renderManagerPanel(
           description:
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
             `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(
           btn('ax:view_event', '📊 View Event'),
-          btn('ax:refresh', '🔄 Refresh Status'),
           btn('ax:remind', '📣 Remind Now'),
-          btn('ax:close', '🏁 Close Reviews', Style.DANGER),
+          btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
+          abortBtn(),
         )],
       };
     }
@@ -201,9 +223,9 @@ export function renderManagerPanel(
           description:
             `Flipping docs read-only and posting reveals… **${done} / ${stats.count}**\n` +
             `(read-only: ${stats.flipped}/${stats.count} · reveals: ${stats.revealed}/${stats.count})` +
-            stallLine(stats.activeJob),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: sheetBtn ? [row(sheetBtn)] : [],
+        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     case 'REVEALED': {
@@ -215,10 +237,10 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎉 Revealed — ${e.topic}`,
           description:
-            `**${stats.count}** participants · review deadline was ${ts(e.review_deadline!)}\n` +
+            `**${stats.count}** participants · ${loopsPhrase(stats.groupSizes)} · review deadline was ${ts(e.review_deadline!)}\n` +
             `Docs are view-only; reveals are posted in participant threads.` + finishing,
         })],
-        components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.DANGER)].filter(Boolean) as unknown[])],
+        components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.PRIMARY), abortBtn()].filter(Boolean) as unknown[])],
       };
     }
     default:
@@ -250,13 +272,15 @@ export function renderParticipantPanel(
       const banner = e.signup_banner_flipped
         ? '\n\n**⏰ Deadline passed — still accepting until the manager closes sign-ups.**'
         : '';
+      // The live signup count is deliberately manager-only — the participant
+      // panel never shows how many people have signed up.
       return {
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
             `${HOW_IT_WORKS}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
-            `**Sign-up form:** anime pick + ${itemCount} question(s)\n**${stats.count}** signed up${banner}`,
+            `**Sign-up form:** anime pick + ${itemCount} question(s)${banner}`,
         })],
         components: [row(
           btn('ax:signup', '📝 Sign Up', Style.PRIMARY),

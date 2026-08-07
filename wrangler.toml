@@ -9,10 +9,10 @@ compatibility_date = "2025-09-01"
 # (TOKEN_ENC_KEY = 32 random bytes, base64 — e.g. `openssl rand -base64 32`)
 # ---------------------------------------------------------------------------
 [vars]
-DISCORD_APP_ID = "REPLACE_ME"
-DISCORD_PUBLIC_KEY = "REPLACE_ME"
+DISCORD_APP_ID = "1533788885727838288"
+DISCORD_PUBLIC_KEY = "8122b26bc189196dfb62735ee7453de419155ed0c719506dc3f2e15f4ab70a87"
 # Must exactly match an authorized redirect URI on the Google OAuth client:
-GOOGLE_REDIRECT_URI = "https://anime-exchange-bot.<your-subdomain>.workers.dev/google/oauth/callback"
+GOOGLE_REDIRECT_URI = "https://anime-exchange-bot.jaejunghaa.workers.dev/google/oauth/callback"
 MAX_PARTICIPANTS = "100"
 # Fan-out units per cron tick (spec §7.4). The spec's sample env says 6; the
 # default here is 5 because a launch unit costs ~7 external subrequests
@@ -22,13 +22,18 @@ MAX_PARTICIPANTS = "100"
 # with headroom. On the paid plan, raise it freely.
 JOB_BATCH = "5"
 REMINDERS_PER_TICK = "30"
-ANILIST_FALLBACK = "true"
 SFW_ONLY = "true"
+# Effectively REQUIRED for reliable search on Workers: an official MAL API v2
+# client id. Jikan (the only fallback) sits behind Cloudflare bot protection
+# that routinely 403s Workers egress traffic; the authenticated official API
+# is not subject to that. Get one free in ~2 minutes:
+# https://myanimelist.net/apiconfig ("Create ID", app type: other).
+MAL_CLIENT_ID = "0b17b0153ce210443a904e98ff279a1d"
 
 [[d1_databases]]
 binding = "DB"
 database_name = "anime-exchange"
-database_id = "REPLACE_ME"
+database_id = "d1979187-f851-4749-a40b-6986c55cb86b"
 migrations_dir = "migrations"
 
 [triggers]

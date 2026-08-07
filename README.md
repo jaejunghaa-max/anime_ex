@@ -2,10 +2,15 @@
 
 A Discord bot that runs an **Anime Exchange**: every participant submits one anime
 recommendation, receives another participant's pick at random, watches the full
-season, and writes a review in a Google Doc by a deadline. Assignments form a
-single circular loop; the recommender's identity stays secret until the reveal.
+season, and writes a review in a Google Doc by a deadline. Assignments form
+circular loops — one big loop over everyone by default, or several smaller
+loops if the manager splits participants into **groups**. The recommender's
+identity stays secret until the reveal.
 
-Implements **[Specification v2](.)** — one event per guild, all state in
+**[MANUAL.md](MANUAL.md) is the day-to-day user guide** (managers &
+participants); this README covers architecture and deployment.
+
+Implements **[Specification v2, rev. 3](.)** — one event per guild, all state in
 Cloudflare **D1**, all Google artifacts in the **manager's own Drive** (OAuth,
 `drive.file` scope only), designed to fit the **Workers Free plan** budget.
 
@@ -20,7 +25,7 @@ Cloudflare **D1**, all Google artifacts in the **manager's own Drive** (OAuth,
   per-unit completion markers — a redeploy mid-launch loses nothing, and each
   invocation stays inside the free plan's 10 ms CPU / 50 subrequest budget.
 - Raw `fetch` REST everywhere (Discord v10, Drive v3, Sheets v4, Docs v1,
-  Jikan v4, AniList GraphQL). **Zero runtime dependencies.**
+  Jikan v4, official MAL API v2). **Zero runtime dependencies.**
 
 ```
 src/
@@ -29,10 +34,10 @@ src/
   jobs.ts       batched launch / close / sync / finish engine
   handlers/     router, /setup, manager panel, signup wizard
   panels.ts     pure render(state) → panel payloads for both pinned panels
-  validate.ts   sheet↔D1 reconciliation; row order = the loop
+  validate.ts   sheet↔D1 reconciliation; row order + Group column = the loops
   sheet.ts      sheet layout; derived Santa/Given block (never read as input)
   google.ts     OAuth token cache + Drive/Sheets/Docs REST
-  mal.ts        Jikan search + EN/JP re-ranking + 24 h cache (+ AniList fallback)
+  mal.ts        official MAL / Jikan search + EN/JP re-ranking + 24 h cache
   discord.ts    REST client + component/response builders
   util.ts       WebCrypto (Ed25519, AES-GCM), Intl-based tz conversion, loop math
 ```
@@ -101,19 +106,40 @@ Everything happens on the two pinned panels:
    (English and Japanese queries both re-ranked across all title variants) →
    optional second modal (items 5–9) → confirm. Edit/withdraw any time while
    sign-ups are open.
-3. **Stop Sign-Ups** → **Shuffle** and/or hand-reorder rows in the sheet (row
-   order *is* the loop: your santa is simply the next row; the Santa/Given
-   columns are always derived, never read) → **Validate** → **Launch**.
+3. **Stop Sign-Ups** → arrange the loops → **Validate** → **Launch**.
+   The process order is **Grouping first, then Shuffle**:
+   - **🧩 Grouping** (step 1) splits everyone into G random loops of
+     near-equal size (G ≤ ⌊n/2⌋; G = 1 is the classic single loop). Re-roll
+     freely.
+   - **🔀 Shuffle** (step 2) re-draws the order *within each group
+     independently*, preserving membership — randomize assignments after
+     grouping or hand-curating.
+   - **Manual control = two sheet levers**: reorder rows (loop order) and edit
+     the **Group** column (loop membership; blank = 1). Your santa is simply
+     the next row *within your group's block*; the Santa/Given columns are
+     always derived, never read.
+   - **Validate** parses the Group column (positive integers, normalized to
+     1..G by first appearance), blocks on any 1-member group
+     (self-assignment), warns on 2-member groups (mutual pair — intentional
+     gift-swap mode is fine), then re-sorts rows into contiguous group blocks
+     and adopts order + membership into D1.
 4. Launch runs as a batched job: per participant a review doc
    (`Review of {Anime} by {name}`, anyone-with-link **editor**), a private
-   thread `🎁 {name}`, and an assignment card with the doc link. The panel
-   counts up (~n/`JOB_BATCH` minutes) and flips to RUNNING by itself.
-5. During RUNNING: hourly "wrote" detection (modifiedTime + char count vs the
-   doc template), progress panel, scheduled reminders (thread ping, optional DM
-   mirror), **Remind Now** for laggards.
+   thread `🎁 {name}`, and an assignment card with the doc link plus a
+   **⭐ Score it /10** button. The panel counts up (~n/`JOB_BATCH` minutes)
+   and flips to RUNNING by itself.
+5. During RUNNING: wrote-detection every 30 minutes and on every
+   **View Event** click (chars written beyond the doc template — internal;
+   the sheet shows a **Review Length** column),
+   progress panel, scheduled reminders (thread ping, optional DM mirror),
+   **Remind Now** for laggards. Participants can score their given anime out
+   of 10 any time until Close (re-scoring allowed); scores land in the
+   sheet's **Score** column and appear on reveal cards, the gallery and
+   View Event.
 6. **Close Reviews** (with or without a public gallery): final status sync, all
    docs flip to anyone-with-link **viewer** *before* any reveal link is posted,
-   then reveal cards (+ optional gallery of the whole loop).
+   then reveal cards (+ optional gallery with one section per loop — single-loop
+   events get one untitled section).
 7. **Finish**: deletes threads and the bot's event data. **The sheet and docs
    stay in the manager's Drive** — nothing to export.
 
@@ -125,6 +151,10 @@ Everything happens on the two pinned panels:
 - **Restart-safe by construction:** panels re-render from D1; jobs re-enter on
   per-unit markers; duplicate enqueues are blocked by a partial unique index;
   every state transition is a conditional `UPDATE … WHERE state = ?`.
+- **🛑 Abort:** every non-IDLE state has a red Abort button — it cancels any
+  in-flight launch/close/sync job, purges unsent reminders, deletes threads
+  (batched) and resets both panels to IDLE. The sheet and docs always stay in
+  the manager's Drive. Use it whenever an event is wedged.
 - **Stalls self-heal:** after 5 consecutive failing ticks the manager panel
   shows the job's last error (e.g. the Google reconnect prompt); the dispatcher
   retries every minute, so fixing the cause is sufficient.
@@ -147,7 +177,29 @@ Everything happens on the two pinned panels:
 | Private threads without boosts; `Manage Threads` visibility caveat | Yes (documented above) |
 | `drive.file` scope for Sheets/Docs/Drive calls on app-created files | Yes — creation + all follow-up calls are on app-created files; the connected email comes from `drive/v3/about` (no extra scope) |
 | Free plan: 10 ms CPU, 50 subrequests, 1-min cron; D1 ops may count | Designed with headroom (`JOB_BATCH=5`); tune upward on paid |
-| Jikan v4 availability (~3 req/s) | One retry + 24 h D1 cache; AniList fallback for native-script queries |
+| Jikan v4 availability (~3 req/s) | Two-source chain: official MAL API v2 (primary when `MAL_CLIENT_ID` set) → Jikan (UA + backed-off retries); 24 h D1 cache; every outcome logged; `/diag/search` probes both from the Worker. The spec's AniList fallback (§9.4) was removed — graphql.anilist.co blocks Workers traffic outright |
+
+## Troubleshooting search ("Search is temporarily unavailable")
+
+That message means **every** search source failed. The usual cause on Workers:
+Jikan (`api.jikan.moe`) sits behind Cloudflare bot protection, which often
+403-challenges traffic from Workers' shared egress IPs — no header fixes
+that. (AniList blocks Workers traffic outright, which is why it is not used
+at all.)
+
+1. **Set `MAL_CLIENT_ID`** (the real fix). Register a free client id at
+   <https://myanimelist.net/apiconfig> (Create ID → app type "other"), put it
+   in `wrangler.toml` `[vars]`, redeploy. The bot then talks to the official,
+   authenticated MAL API v2 first, which is not subject to those bot walls;
+   Jikan remains as the fallback.
+2. **Probe from the Worker itself**:
+   `https://<worker>/diag/search?q=frieren&k=<last 8 chars of DISCORD_PUBLIC_KEY>`
+   returns per-source `ok/error` + timing, plus the running build id — this
+   shows exactly which upstream is failing with what status.
+3. **Check logs**: `npx wrangler tail` — every search logs one line per source
+   attempt (`jikan:ok(20)`, `mal-official:MAL 403`, …).
+4. The health route `/` shows the deployed build id — confirm your deploy
+   actually went out.
 
 ## Development
 
