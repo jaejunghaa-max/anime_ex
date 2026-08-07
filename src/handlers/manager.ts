@@ -134,6 +134,8 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
 
 function itemModal(customId: string, item?: FormItem): Response {
   const opts = item ? optionsOf(item) : [];
+  // New items default to 👁 visible; editing keeps the stored setting.
+  const visible = item ? !!item.visible_to_recommender : true;
   return respond.modal(customId, item ? 'Edit form item' : 'Add form item', [
     modalText('label', 'Question label', { value: item?.label ?? '', max: 100, placeholder: 'Favorite genre' }),
     modalSelect('type', 'Type', [
@@ -145,8 +147,8 @@ function itemModal(customId: string, item?: FormItem): Response {
       description: 'Only used for multiple choice',
     }),
     modalSelect('visibility', 'Who sees the answer?', [
-      { label: '🔒 Hidden (manager sheet only)', value: '0', default: !(item?.visible_to_recommender) },
-      { label: '👁 Visible to your recommender', value: '1', default: !!item?.visible_to_recommender },
+      { label: '👁 Visible to your recommender', value: '1', default: visible },
+      { label: '🔒 Hidden (manager sheet only)', value: '0', default: !visible },
     ]),
   ]);
 }
