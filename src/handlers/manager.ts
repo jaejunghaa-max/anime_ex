@@ -8,7 +8,7 @@ import { modalFields } from '../types';
 import {
   btn, editOriginal, embed, linkBtn, modalSelect, modalText, respond, row, stringSelect, Style,
 } from '../discord';
-import { getItems, countSignups, dbBatchChunked, optionsOf, orderedSignups, transition } from '../db';
+import { getItems, countSignups, dbBatchChunked, loopContext, optionsOf, orderedSignups, transition } from '../db';
 import { createSpreadsheet, isConnected, sheetUrl } from '../google';
 import { rewriteSheet, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
@@ -99,6 +99,10 @@ export function basicsModal(c: HCtx): Response {
       { label: 'No — I will stop sign-ups manually', value: '0', default: !e.auto_stop },
       { label: 'Yes — close sign-ups automatically', value: '1', default: !!e.auto_stop },
     ]),
+    modalText('declines', 'Sorry😞 budget per person (0–9)', {
+      value: String(e.max_declines), max: 1,
+      description: 'How many recommendations each participant may send back',
+    }),
   ]);
 }
 
@@ -110,6 +114,7 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   const tz = (f.get('tz') ?? '').trim();
   const deadlineRaw = (f.get('deadline') ?? '').trim();
   const autoStop = f.get('autostop') === '1' ? 1 : 0;
+  const declinesRaw = (f.get('declines') ?? '').trim();
   if (!isValidTz(tz)) {
     return respond.ephemeral({ content: `⚠ \`${tz}\` is not a valid IANA timezone (e.g. \`Asia/Seoul\`, \`America/New_York\`). Reopen **Set Basics** and try again.` });
   }
@@ -120,13 +125,17 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   if (deadline <= now()) {
     return respond.ephemeral({ content: '⚠ The sign-up deadline must be in the future. Reopen **Set Basics** and try again.' });
   }
+  if (!/^[0-9]$/.test(declinesRaw)) {
+    return respond.ephemeral({ content: '⚠ The Sorry😞 budget must be a single digit **0–9**. Reopen **Set Basics** and try again.' });
+  }
+  const maxDeclines = parseInt(declinesRaw, 10);
   await c.env.DB.prepare(
-    'UPDATE events SET topic = ?1, tz = ?2, signup_deadline = ?3, auto_stop = ?4, signup_banner_flipped = 0, updated_at = ?5 WHERE event_id = ?6',
-  ).bind(topic, tz, deadline, autoStop, now(), e.event_id).run();
+    'UPDATE events SET topic = ?1, tz = ?2, signup_deadline = ?3, auto_stop = ?4, max_declines = ?5, signup_banner_flipped = 0, updated_at = ?6 WHERE event_id = ?7',
+  ).bind(topic, tz, deadline, autoStop, maxDeclines, now(), e.event_id).run();
   bg(c, async () => {
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `✅ Basics saved — **${topic}**, sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), auto-stop ${autoStop ? 'on' : 'off'}.`,
+      content: `✅ Basics saved — **${topic}**, sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), auto-stop ${autoStop ? 'on' : 'off'}, **${maxDeclines}** decline(s) per person.`,
     });
   });
   return respond.deferEphemeral();
@@ -158,7 +167,7 @@ export async function itemAdd(c: HCtx): Promise<Response> {
   if (!e) return stale(c);
   const items = await getItems(c.env, e.event_id);
   if (items.length >= MAX_ITEMS) {
-    return respond.ephemeral({ content: `⚠ Custom item cap is **${MAX_ITEMS}** — that is what fits the two-step signup flow (2 modals × 5 inputs, minus the anime keyword).` });
+    return respond.ephemeral({ content: `⚠ Custom item cap is **${MAX_ITEMS}** — that is what fits the two-step signup flow (2 modals × 5 inputs, minus the built-in MAL/AniList link).` });
   }
   return itemModal('axm:item:new');
 }
@@ -388,10 +397,10 @@ export async function stopSignupsGo(c: HCtx): Promise<Response> {
       return;
     }
     const items = await getItems(c.env, e.event_id);
-    const n = await adoptSignupOrder(c.env, c.guild, e, items); // fills the derived Santa/Given block (§4 side effect)
+    const n = await adoptSignupOrder(c.env, c.guild, e, items); // fills the derived Santa block (§4 side effect)
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `🛑 Sign-ups closed — **${n}** participants. Shuffle or reorder sheet rows, Validate, then Launch.`,
+      content: `🛑 Sign-ups closed — **${n}** participants. Group/Shuffle or reorder sheet rows, Validate, then **🎯 Start Recommending**.`,
       components: [],
     });
   });
@@ -575,10 +584,193 @@ export async function removalRestore(c: HCtx, userId: string): Promise<Response>
   return respond.deferUpdate();
 }
 
+// -------------------------------------------------- Start Recommending
+// MATCHING → PREPARING: validate, LOCK the assignment (row order + groups
+// stop being inputs), then the batched prepare job creates each private
+// thread and posts the Santa task card.
+
+export async function recoStart(c: HCtx): Promise<Response> {
+  const e = needState(c, 'MATCHING');
+  if (!e) return stale(c);
+  const n = await countSignups(c.env, e.event_id);
+  return confirm(
+    `🎯 **Start the recommendation phase for ${e.topic}?**\n` +
+    `Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
+    `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
+    `Each person can send picks back **${e.max_declines}** time(s).\n` +
+    `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
+    'ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS,
+  );
+}
+
+export async function recoStartGo(c: HCtx): Promise<Response> {
+  const e = needState(c, 'MATCHING');
+  if (!e) return stale(c);
+  bg(c, async () => {
+    const items = await getItems(c.env, e.event_id);
+    const result = await runValidate(c.env, c.guild, e, items);
+    if (!result.ok) {
+      await editOriginal(c.env, c.i.token, validationResponse(c, validateReport(result), result.missing));
+      return;
+    }
+    if (!(await transition(c.env, e.event_id, 'MATCHING', 'PREPARING'))) {
+      await editOriginal(c.env, c.i.token, { content: '↻ State changed — panels refreshed.', components: [] });
+      await repaint(c);
+      return;
+    }
+    await enqueueJob(c, e.event_id, 'prepare');
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content:
+        `🎯 **Recommendation phase starting** — ${result.n} Santa missions will be delivered over the next ` +
+        `~${Math.max(1, Math.ceil(result.n / c.cfg.jobBatch))} minute(s). Assignments are locked.`,
+      components: [],
+    });
+  });
+  return respond.deferUpdate();
+}
+
+// ---------------------------------------------------------- RECOMMENDING
+
+/** [📊 View Status] — per-pair progress of the recommendation phase. */
+export async function recoView(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RECOMMENDING', 'PREPARING');
+  if (!e) return stale(c);
+  const { all, loops } = await loopContext(c.env, e.event_id);
+  const lines = all.map((s, idx) => {
+    const santa = all[loops.santa[idx]!]!;
+    switch (s.reco_status) {
+      case 'FINAL': {
+        const via = s.reco_final_via === 'EXHAUSTED' ? '🔒 auto-locked'
+          : s.reco_final_via === 'FORCED' ? '⏩ manager-locked' : '✅ approved';
+        return `<@${s.user_id}> — ${via}: **${s.reco_title}** (from ${santa.display_name})`;
+      }
+      case 'PENDING':
+        return `<@${s.user_id}> — ⏳ **${s.reco_title}** awaiting their reply (from ${santa.display_name})`;
+      default:
+        return `<@${s.user_id}> — 🎁 waiting on **${santa.display_name}**` +
+          (s.declines_used > 0 ? ` (declined ×${s.declines_used})` : '');
+    }
+  });
+  const final = all.filter((s) => s.reco_status === 'FINAL').length;
+  const chunks = chunkLines(lines.length ? lines : ['*no participants*'], 3900, 40);
+  const embeds: ReturnType<typeof embed>[] = [];
+  let used = 0;
+  let shown = 0;
+  for (const d of chunks) {
+    if (embeds.length >= 9 || used + d.length > 5200) break;
+    embeds.push(embed({ description: d }));
+    used += d.length;
+    shown += d.split('\n').length;
+  }
+  if (shown < lines.length) {
+    embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
+  }
+  return respond.ephemeral({
+    content: `📊 **${e.topic}** — ${final}/${all.length} picks locked in.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+    embeds,
+  });
+}
+
+/** [⏩ Force-finalize] — locks every ⏳ pending pick on the giftee's behalf. */
+export async function forceFinal(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RECOMMENDING');
+  if (!e) return stale(c);
+  const agg = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN reco_status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting
+     FROM signups WHERE event_id = ?1`,
+  ).bind(e.event_id).first<{ pending: number; waiting: number }>();
+  const pending = agg?.pending ?? 0;
+  if (pending === 0) {
+    return respond.ephemeral({
+      content: (agg?.waiting ?? 0) > 0
+        ? `⏩ Nothing is pending — **${agg!.waiting}** participant(s) are still waiting on their Santa. Use 📣 Remind Now to nudge the Santas.`
+        : '⏩ Nothing to force — every pick is already locked in. 🎉',
+    });
+  }
+  return confirm(
+    `⏩ Lock in **${pending}** pending pick(s) on the giftees' behalf? They lose their chance to decline those.` +
+    ((agg?.waiting ?? 0) > 0 ? `\n(**${agg!.waiting}** more are still waiting on their Santa — this doesn't affect them.)` : ''),
+    'ax:force_final:go', `⏩ Confirm — lock ${pending} pick(s)`, Style.PRIMARY,
+  );
+}
+
+export async function forceFinalGo(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RECOMMENDING');
+  if (!e) return stale(c);
+  bg(c, async () => {
+    const res = await c.env.DB.prepare(
+      "UPDATE signups SET reco_status = 'FINAL', reco_final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND reco_status = 'PENDING'",
+    ).bind(now(), e.event_id).run();
+    const locked = res.meta.changes ?? 0;
+    const left = await c.env.DB
+      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
+      .bind(e.event_id).first<{ n: number }>();
+    const items = await getItems(c.env, e.event_id);
+    const ordered = await orderedSignups(c.env, e.event_id);
+    await rewriteSheet(c.env, c.guild, e, items, ordered).catch(() => {});
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content: `⏩ Locked **${locked}** pending pick(s).` +
+        ((left?.n ?? 0) > 0
+          ? ` **${left!.n}** participant(s) are still waiting on their Santa.`
+          : ' ✅ Everyone is locked in — ready to 🚀 Launch.'),
+      components: [],
+    });
+  });
+  return respond.deferUpdate();
+}
+
+/** [↩ Back to Matching] — destructive: wipes every pick/decline, keeps threads. */
+export async function backMatching(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RECOMMENDING');
+  if (!e) return stale(c);
+  return confirm(
+    '↩ **Go back to Matching?** All picks, approvals and declines are **wiped** and assignments unlock ' +
+    'for regrouping/shuffling. Private threads stay and are reused when you start recommending again. ' +
+    'This cannot be undone.',
+    'ax:back_matching:go', 'Confirm — back to Matching',
+  );
+}
+
+export async function backMatchingGo(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RECOMMENDING');
+  if (!e) return stale(c);
+  bg(c, async () => {
+    if (!(await transition(c.env, e.event_id, 'RECOMMENDING', 'MATCHING'))) {
+      await editOriginal(c.env, c.i.token, { content: '↻ State changed — panels refreshed.', components: [] });
+      await repaint(c);
+      return;
+    }
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE signups SET reco_mal_id = NULL, reco_title = NULL, reco_title_en = NULL, reco_year = NULL,
+           reco_type = NULL, reco_episodes = NULL, reco_url = NULL, reco_image = NULL,
+           reco_status = 'NONE', reco_final_via = NULL, declines_used = 0, reco_declined_json = '[]',
+           reco_card_posted = 0, updated_at = ?1
+         WHERE event_id = ?2`,
+      ).bind(now(), e.event_id),
+      c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
+      c.env.DB.prepare('DELETE FROM reminders WHERE event_id = ?1 AND sent_at IS NULL').bind(e.event_id),
+    ]);
+    const items = await getItems(c.env, e.event_id);
+    const ordered = await orderedSignups(c.env, e.event_id);
+    await rewriteSheet(c.env, c.guild, e, items, ordered).catch(() => {});
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content: '↩ **Back to Matching** — all picks wiped, assignments unlocked. Old thread cards are stale; fresh missions go out when you press 🎯 Start Recommending again.',
+      components: [],
+    });
+  });
+  return respond.deferUpdate();
+}
+
 // ---------------------------------------------------------------- Launch
+// Now gated on the recommendation phase: every pick must be FINAL.
 
 export function launchModal(c: HCtx): Response {
-  const e = needState(c, 'MATCHING');
+  const e = needState(c, 'RECOMMENDING');
   if (!e) return stale(c);
   return respond.modal('axm:launch', 'Launch the exchange', [
     modalText('deadline', 'Review deadline (YYYY-MM-DD HH:mm)', {
@@ -598,7 +790,7 @@ export function launchModal(c: HCtx): Response {
 }
 
 export async function launchSubmit(c: HCtx): Promise<Response> {
-  const e = needState(c, 'MATCHING');
+  const e = needState(c, 'RECOMMENDING');
   if (!e) return stale(c);
   const f = modalFields(c.i.data?.components);
   const tz = (f.get('tz') ?? '').trim();
@@ -619,39 +811,56 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
     'UPDATE events SET review_deadline = ?1, tz = ?2, reminder_days = ?3, dm_mirror = ?4, updated_at = ?5 WHERE event_id = ?6',
   ).bind(deadline, tz, days.join(','), mirror, now(), e.event_id).run();
   const n = await countSignups(c.env, e.event_id);
+  const notFinal = await c.env.DB
+    .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
+    .bind(e.event_id).first<{ n: number }>();
   const reminderLine = days.length
     ? days.map((d) => `${d}d`).join(', ') + ' before the deadline'
     : 'none';
   return respond.ephemeral({
     content:
       `🚀 **Launch ${e.topic}?**\n` +
-      `• Participants: **${n}**\n` +
+      `• Participants: **${n}** · picks locked: **${n - (notFinal?.n ?? 0)}/${n}**\n` +
       `• Review deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Reminders: ${reminderLine}${mirror ? ' (+ DM mirror)' : ''}\n\n` +
-      `Launching validates the sheet, creates one review doc + private thread per participant ` +
-      `(batched — ~${Math.max(1, Math.ceil(n / c.cfg.jobBatch))} min), and locks the loop. Forward-only.`,
+      ((notFinal?.n ?? 0) > 0
+        ? `⚠ **${notFinal!.n} pick(s) are not locked in yet** — the launch will refuse until every pick is FINAL.\n\n`
+        : '') +
+      `Launching creates one review doc per participant for their locked-in anime and posts the assignment ` +
+      `card in their existing thread (batched — ~${Math.max(1, Math.ceil(n / c.cfg.jobBatch))} min). Forward-only.`,
     components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
 }
 
 export async function launchGo(c: HCtx): Promise<Response> {
-  const e = needState(c, 'MATCHING');
+  const e = needState(c, 'RECOMMENDING');
   if (!e) return stale(c);
   if (!e.review_deadline || e.review_deadline <= now()) {
     return respond.ephemeral({ content: '⚠ Review deadline missing or passed — reopen **Launch**.' });
   }
   bg(c, async () => {
-    const items = await getItems(c.env, e.event_id);
-    const result = await runValidate(c.env, c.guild, e, items);
-    if (!result.ok) {
-      await editOriginal(c.env, c.i.token, validationResponse(c, validateReport(result), result.missing));
+    const notFinal = await c.env.DB
+      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
+      .bind(e.event_id).first<{ n: number }>();
+    if ((notFinal?.n ?? 0) > 0) {
+      await editOriginal(c.env, c.i.token, {
+        content:
+          `⚠ **${notFinal!.n} pick(s) are not locked in yet.** ` +
+          `Use **⏩ Force-finalize** for the ⏳ pending ones and **📣 Remind Now** for Santas who haven't picked.`,
+        components: [],
+      });
       return;
     }
-    if (!(await transition(c.env, e.event_id, 'MATCHING', 'LAUNCHING'))) {
+    if (!(await transition(c.env, e.event_id, 'RECOMMENDING', 'LAUNCHING'))) {
       await editOriginal(c.env, c.i.token, { content: '↻ State changed — panels refreshed.', components: [] });
       await repaint(c);
       return;
     }
+    // Close the race window: a pick that landed between the gate and the
+    // transition launches as manager-finalized rather than dangling PENDING.
+    await c.env.DB.prepare(
+      "UPDATE signups SET reco_status = 'FINAL', reco_final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND reco_status = 'PENDING'",
+    ).bind(now(), e.event_id).run();
     // Freeze reminders (§10.1): rows per (day × participant), future only.
     const days = parseReminderDays(e.reminder_days) ?? [];
     const participants = await orderedSignups(c.env, e.event_id);
@@ -669,7 +878,7 @@ export async function launchGo(c: HCtx): Promise<Response> {
     await enqueueJob(c, e.event_id, 'launch');
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `🚀 **Launching** — ${result.n} assignments will be delivered over the next ~${Math.max(1, Math.ceil(result.n / c.cfg.jobBatch))} minute(s). The panel counts up automatically.`,
+      content: `🚀 **Launching** — ${participants.length} review docs + assignment cards will be delivered over the next ~${Math.max(1, Math.ceil(participants.length / c.cfg.jobBatch))} minute(s). The panel counts up automatically.`,
       components: [],
     });
   });
@@ -719,35 +928,60 @@ export async function viewEvent(c: HCtx): Promise<Response> {
   });
 }
 
+/**
+ * Manual-nudge targets by state: RUNNING → review laggards; RECOMMENDING →
+ * Santas who owe a pick + giftees sitting on a pending pick (deduped). The
+ * cron's delivery re-checks the condition, so a nudge that resolves in the
+ * meantime is skipped silently.
+ */
+async function remindTargets(c: HCtx, e: EventRow): Promise<string[]> {
+  if (e.state === 'RUNNING') {
+    const laggards = await c.env.DB
+      .prepare('SELECT user_id FROM signups WHERE event_id = ?1 AND wrote = 0')
+      .bind(e.event_id).all<{ user_id: string }>();
+    return laggards.results.map((l) => l.user_id);
+  }
+  const { all, loops } = await loopContext(c.env, e.event_id);
+  const targets = new Set<string>();
+  all.forEach((s, idx) => {
+    if (s.reco_status === 'NONE') targets.add(all[loops.santa[idx]!]!.user_id); // their Santa owes a pick
+    if (s.reco_status === 'PENDING') targets.add(s.user_id);                    // they owe a reply
+  });
+  return [...targets];
+}
+
 export async function remindNow(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RUNNING');
+  const e = needState(c, 'RUNNING', 'RECOMMENDING');
   if (!e) return stale(c);
-  const laggards = await c.env.DB
-    .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND wrote = 0')
-    .bind(e.event_id).first<{ n: number }>();
-  const n = laggards?.n ?? 0;
-  if (n === 0) return respond.ephemeral({ content: '📣 Everyone has already started writing — nothing to nudge. 🎉' });
+  const targets = await remindTargets(c, e);
+  if (targets.length === 0) {
+    return respond.ephemeral({
+      content: e.state === 'RUNNING'
+        ? '📣 Everyone has already started writing — nothing to nudge. 🎉'
+        : '📣 Nobody is stalling — every pick is locked in. 🎉',
+    });
+  }
   return confirm(
-    `📣 Send an immediate reminder to **${n}** participant(s) who haven't started writing?`,
-    'ax:remind:go', `Confirm — remind ${n}`, Style.PRIMARY,
+    e.state === 'RUNNING'
+      ? `📣 Send an immediate reminder to **${targets.length}** participant(s) who haven't started writing?`
+      : `📣 Nudge **${targets.length}** participant(s) who owe an action (a pick to send, or a reply to give)?`,
+    'ax:remind:go', `Confirm — remind ${targets.length}`, Style.PRIMARY,
   );
 }
 
 export async function remindNowGo(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RUNNING');
+  const e = needState(c, 'RUNNING', 'RECOMMENDING');
   if (!e) return stale(c);
-  const laggards = await c.env.DB
-    .prepare('SELECT user_id FROM signups WHERE event_id = ?1 AND wrote = 0')
-    .bind(e.event_id).all<{ user_id: string }>();
-  if (laggards.results.length) {
-    await dbBatchChunked(c.env, laggards.results.map((l) =>
+  const targets = await remindTargets(c, e);
+  if (targets.length) {
+    await dbBatchChunked(c.env, targets.map((uid) =>
       c.env.DB.prepare("INSERT INTO reminders (event_id, user_id, kind, due_at) VALUES (?1, ?2, 'manual', ?3)")
-        .bind(e.event_id, l.user_id, now())));
+        .bind(e.event_id, uid, now())));
   }
-  const ticks = Math.max(1, Math.ceil(laggards.results.length / c.cfg.remindersPerTick));
+  const ticks = Math.max(1, Math.ceil(targets.length / c.cfg.remindersPerTick));
   bg(c, async () => {
     await editOriginal(c.env, c.i.token, {
-      content: `📣 Reminders queued for **${laggards.results.length}** participant(s) — delivered within ~${ticks} minute(s).`,
+      content: `📣 Reminders queued for **${targets.length}** participant(s) — delivered within ~${ticks} minute(s).`,
       components: [],
     });
   });

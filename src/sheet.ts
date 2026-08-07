@@ -1,7 +1,9 @@
-// Sheet layout + rewrite/read helpers (spec §8.3). The sheet's row order and
-// its manager-editable Group column ARE the assignment (rows = loop order,
-// Group = loop membership); the derived Santa/Given block is always
-// overwritten by the bot and never read back as input (decision #6/#7).
+// Sheet layout + rewrite/read helpers (v3). The sheet's row order and its
+// manager-editable Group column ARE the assignment (rows = loop order, Group =
+// loop membership) while MATCHING lasts; the derived Secret Santa column and
+// the Recommendation/Rec. Status block are always written by the bot and never
+// read back as input. Once recommendations start, the assignment is frozen —
+// the sheet becomes a dashboard.
 
 import type { Env, EventRow, FormItem, GuildRow, SignupRow } from './types';
 import {
@@ -32,13 +34,14 @@ export function colLetter(n: number): string {
 }
 
 // Fixed columns before the custom items block.
-const FIXED = 5; // A Row#, B User ID, C Username, D Anime, E MAL
+const FIXED = 4; // A Row#, B User ID, C Username, D MAL/AniList
 
 export interface Layout {
   itemCount: number;
   groupCol: number;
   santaCol: number;
-  givenCol: number;
+  recoCol: number;
+  recoStatusCol: number;
   linkCol: number;
   lengthCol: number;
   scoreCol: number;
@@ -49,26 +52,45 @@ export function layoutOf(items: FormItem[]): Layout {
   const k = items.length;
   return {
     itemCount: k,
-    groupCol: FIXED + k + 1, // manager-editable loop membership (§8.3)
-    santaCol: FIXED + k + 2,
-    givenCol: FIXED + k + 3,
-    linkCol: FIXED + k + 4,
-    lengthCol: FIXED + k + 5, // "Review Length" — body chars minus template
-    scoreCol: FIXED + k + 6,  // participant's /10 score of their given anime
-    lastCol: FIXED + k + 6,
+    groupCol: FIXED + k + 1,      // manager-editable loop membership
+    santaCol: FIXED + k + 2,      // derived: next row within the group
+    recoCol: FIXED + k + 3,       // the anime this row's Santa picked for them
+    recoStatusCol: FIXED + k + 4, // approval state of that pick
+    linkCol: FIXED + k + 5,
+    lengthCol: FIXED + k + 6,     // "Review Length" — body chars minus template
+    scoreCol: FIXED + k + 7,      // participant's /10 score of their given anime
+    lastCol: FIXED + k + 7,
   };
 }
 
 export function headerRow(items: FormItem[]): string[] {
   return [
-    'Row #', 'User ID 🔑', 'Username', 'Anime', 'MAL',
+    'Row #', 'User ID 🔑', 'Username', 'MAL/AniList',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Group', 'Secret Santa', 'Given Anime', 'Review Link', 'Review Length', 'Score',
+    'Group', 'Secret Santa', 'Recommendation', 'Rec. Status', 'Review Link', 'Review Length', 'Score',
   ];
 }
 
-export function animeCell(s: SignupRow): string {
-  return s.anime_year ? `${s.anime_title} (${s.anime_year})` : s.anime_title;
+/** Recommendation cell: the anime this row's Santa picked for them. */
+export function recoCell(s: Pick<SignupRow, 'reco_title' | 'reco_year'>): string {
+  if (!s.reco_title) return '';
+  return s.reco_year ? `${s.reco_title} (${s.reco_year})` : s.reco_title;
+}
+
+/** Rec. Status cell — mirrors the approve/decline state machine. */
+export function recoStatusCell(
+  s: Pick<SignupRow, 'reco_status' | 'reco_final_via' | 'declines_used'>,
+): string {
+  switch (s.reco_status) {
+    case 'PENDING':
+      return '⏳ awaiting reply';
+    case 'FINAL':
+      return s.reco_final_via === 'EXHAUSTED' ? '🔒 locked (declines used up)'
+        : s.reco_final_via === 'FORCED' ? '⏩ finalized by manager'
+        : '✅ approved';
+    default:
+      return s.declines_used > 0 ? `😞 declined ×${s.declines_used}` : '';
+  }
 }
 
 /** Review Length cell: chars written beyond the template; flags deleted docs. */
@@ -89,12 +111,12 @@ function dataRow(
     idx + 1,
     s.user_id, // RAW valueInputOption keeps the 18-digit id a string (precision!)
     s.display_name,
-    animeCell(s),
-    s.anime_url,
+    s.list_url,
     ...items.map((it) => answers[String(it.item_id)] ?? ''),
     s.group_no,
     santa ? santa.display_name : '',
-    santa ? animeCell(santa) : '',
+    recoCell(s),
+    recoStatusCell(s),
     s.doc_url ?? '',
     lengthCell(s),
     scoreCell(s),
@@ -103,11 +125,11 @@ function dataRow(
 
 /**
  * Clear + rewrite the header and data block from D1 (idempotent, used by
- * signup upsert/withdraw, Shuffle, Grouping, Validate, restore). Including
- * the header row makes layout changes self-heal on sheets created by older
- * deployments; the clear range sweeps a few extra columns for the same
- * reason. Derived columns fill per group once the loop order has been
- * adopted (row_order non-NULL).
+ * signup upsert/withdraw, Shuffle, Grouping, Validate, restore, and the
+ * job-completion self-heal). Including the header row makes layout changes
+ * self-heal on sheets created by older deployments; the clear range sweeps a
+ * few extra columns for the same reason. Derived columns fill per group once
+ * the loop order has been adopted (row_order non-NULL).
  */
 export async function rewriteSheet(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], ordered: SignupRow[],
@@ -137,17 +159,21 @@ export async function writeHeader(
       { colIndex: 1, note: 'Immutable key — do not edit this column.' },
       {
         colIndex: layout.groupCol - 1,
-        note: 'Loop membership — positive integer, blank = 1. Edit to move someone between loops; rows re-sort into contiguous group blocks on Validate.',
+        note: 'Loop membership — positive integer, blank = 1. Edit to move someone between loops; rows re-sort into contiguous group blocks on Validate. Locked once recommendations start.',
       },
       {
         colIndex: layout.santaCol - 1,
-        note: 'Auto-derived: the next row within the group. Reorder rows / edit Group to change assignments; this block is overwritten on every Shuffle/Grouping/Validate/Launch.',
+        note: 'Auto-derived: the next row within the group recommends for this row. Reorder rows / edit Group to change assignments (until recommendations start); this block is overwritten by the bot.',
+      },
+      {
+        colIndex: layout.recoCol - 1,
+        note: 'Written by the bot during the recommending phase — the anime this row\'s Secret Santa picked for them. Never read as input.',
       },
     ]).catch(() => { /* cosmetic */ });
   }
 }
 
-/** Read the data block for Validate (§5.4): array of rows, col B = user id key. */
+/** Read the data block for Validate: array of rows, col B = user id key. */
 export async function readSheetRows(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
 ): Promise<string[][]> {
@@ -156,7 +182,7 @@ export async function readSheetRows(
   return valuesGet(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol)}1000`));
 }
 
-/** Batched per-tick cell writes: Review Link during Launch (§7.5). */
+/** Batched per-tick cell writes: Review Link during Launch. */
 export function writeReviewLinks(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
   rows: Array<{ rowIndex: number; url: string }>,
@@ -169,7 +195,7 @@ export function writeReviewLinks(
   })));
 }
 
-/** Batched per-tick cell writes: Review Length + Score during sync (§8.5). */
+/** Batched per-tick cell writes: Review Length + Score during sync. */
 export function writeStatusCells(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
   rows: Array<{ rowIndex: number; length: number | string; score: number | string }>,
@@ -182,6 +208,20 @@ export function writeStatusCells(
     range: a1(`${from}${r.rowIndex + 2}:${to}${r.rowIndex + 2}`),
     values: [[r.length, r.score]],
   })));
+}
+
+/** Recommendation + Rec. Status cells for one row — written on every send /
+ *  approve / decline so the manager's sheet mirrors the phase live. */
+export function writeRecoCells(
+  env: Env, guild: GuildRow, event: EventRow, items: FormItem[], row: SignupRow,
+): Promise<unknown> {
+  if (!event.sheet_id || row.row_order === null) return Promise.resolve();
+  const layout = layoutOf(items);
+  const from = colLetter(layout.recoCol);
+  const to = colLetter(layout.recoStatusCol);
+  return valuesUpdate(env, guild, event.sheet_id,
+    a1(`${from}${row.row_order + 2}:${to}${row.row_order + 2}`),
+    [[recoCell(row), recoStatusCell(row)]]);
 }
 
 /** Single-cell Score write when a participant submits their /10 rating. */

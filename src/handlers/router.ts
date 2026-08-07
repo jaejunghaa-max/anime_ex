@@ -9,14 +9,16 @@ import { displayNameOf, shortRef } from '../util';
 import { HCtx, managerOnly, stale } from './common';
 import { handleSetup, isAdmin } from './setup';
 import * as mgr from './manager';
+import * as reco from './reco';
 import * as su from './signup';
 
 // Actions any member may use; everything else under ax:/axm: is manager-only (§13.2).
 const PARTICIPANT_ACTIONS = new Set([
-  'signup', 'signup_pick', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart',
+  'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart',
   'edit_signup', 'withdraw', 'score', 'cancel',
+  'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no', 'reco_me',
 ]);
-const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score']);
+const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score', 'reco_kw']);
 
 export async function routeInteraction(
   env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction,
@@ -76,6 +78,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
       case 'score': return su.scoreSubmit(c);
+      case 'reco_kw': return reco.recoModalKw(c);
       default: return stale(c, 'This form is from an older version.');
     }
   }
@@ -106,8 +109,13 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'validate': return mgr.validate(c);
     case 'rm_confirm': return mgr.removalConfirm(c, arg);
     case 'rm_restore': return mgr.removalRestore(c, arg);
+    case 'reco_start': return arg === 'go' ? mgr.recoStartGo(c) : mgr.recoStart(c);
+    // RECOMMENDING (manager)
+    case 'reco_view': return mgr.recoView(c);
+    case 'force_final': return arg === 'go' ? mgr.forceFinalGo(c) : mgr.forceFinal(c);
+    case 'back_matching': return arg === 'go' ? mgr.backMatchingGo(c) : mgr.backMatching(c);
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
-    // RUNNING (manager)
+    // RUNNING / RECOMMENDING (manager)
     case 'view_event': return mgr.viewEvent(c);
     case 'remind': return arg === 'go' ? mgr.remindNowGo(c) : mgr.remindNow(c);
     case 'close':
@@ -121,13 +129,20 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     // participant wizard
     case 'signup': return su.signupStart(c, false);
     case 'edit_signup': return su.signupStart(c, true);
-    case 'signup_pick': return su.signupPick(c);
     case 'signup_cont': return su.signupContinue(c);
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_confirm': return su.signupConfirm(c);
     case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
+    // participant recommending phase (v3)
+    case 'reco': return reco.recoOpen(c, arg);
+    case 'reco_pick': return reco.recoPick(c);
+    case 'reco_again': return reco.recoAgain(c);
+    case 'reco_send': return reco.recoSend(c);
+    case 'reco_ok': return reco.recoApprove(c, arg);
+    case 'reco_no': return reco.recoDecline(c, arg);
+    case 'reco_me': return reco.recoStatusMe(c);
     default:
       return stale(c, 'This control is from an older version of the panel.');
   }

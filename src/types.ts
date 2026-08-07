@@ -56,8 +56,8 @@ export interface GuildRow {
 }
 
 export type EventState =
-  | 'DRAFTING' | 'SIGNUP_OPEN' | 'MATCHING' | 'LAUNCHING'
-  | 'RUNNING' | 'CLOSING' | 'REVEALED';
+  | 'DRAFTING' | 'SIGNUP_OPEN' | 'MATCHING' | 'PREPARING' | 'RECOMMENDING'
+  | 'LAUNCHING' | 'RUNNING' | 'CLOSING' | 'REVEALED';
 
 export interface EventRow {
   event_id: number;
@@ -71,6 +71,8 @@ export interface EventRow {
   review_deadline: number | null;
   reminder_days: string;
   dm_mirror: number;
+  /** v3: how many times each participant may "Sorry😞" a recommendation (0–9). */
+  max_declines: number;
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
@@ -92,22 +94,33 @@ export interface FormItem {
   visible_to_recommender: number;
 }
 
+export type RecoStatus = 'NONE' | 'PENDING' | 'FINAL';
+export type RecoFinalVia = 'APPROVED' | 'EXHAUSTED' | 'FORCED';
+
 export interface SignupRow {
   signup_id: number;
   event_id: number;
   user_id: string;
   display_name: string;
-  mal_id: number;
-  anime_title: string;
-  anime_title_en: string | null;
-  anime_year: number | null;
-  anime_type: string | null;
-  anime_episodes: number | null;
-  anime_url: string;
-  anime_image: string | null;
+  /** v3 built-in form item: link to the participant's MAL/AniList list. */
+  list_url: string;
   answers_json: string;
   row_order: number | null;
   group_no: number;
+  // v3 recommendation block — the anime recommended TO this row by their Santa.
+  reco_mal_id: number | null;
+  reco_title: string | null;
+  reco_title_en: string | null;
+  reco_year: number | null;
+  reco_type: string | null;
+  reco_episodes: number | null;
+  reco_url: string | null;
+  reco_image: string | null;
+  reco_status: RecoStatus;
+  reco_final_via: RecoFinalVia | null;
+  declines_used: number;
+  reco_declined_json: string;
+  reco_card_posted: number;
   thread_id: string | null;
   doc_id: string | null;
   doc_url: string | null;
@@ -127,7 +140,7 @@ export interface SignupRow {
   updated_at: number;
 }
 
-export type JobKind = 'launch' | 'close' | 'sync' | 'finish';
+export type JobKind = 'prepare' | 'launch' | 'close' | 'sync' | 'finish';
 
 export interface JobRow {
   id: number;
@@ -141,10 +154,16 @@ export interface JobRow {
   attempted_at: number | null;
 }
 
+/**
+ * Wizard drafts, shared by the signup wizard (steps A_DONE/B_DONE — answers in
+ * partial_answers_json, list link under the "link" key) and the RECOMMENDING
+ * wizard (steps R_SEARCH/R_PICKED — keyword/candidates/chosen). The two never
+ * overlap: they run in mutually exclusive event states.
+ */
 export interface DraftRow {
   event_id: number;
   user_id: string;
-  step: 'A_DONE' | 'PICKED' | 'B_DONE';
+  step: 'A_DONE' | 'B_DONE' | 'R_SEARCH' | 'R_PICKED';
   keyword: string | null;
   partial_answers_json: string | null;
   candidates_json: string | null;

@@ -14,6 +14,11 @@ export interface PanelStats {
   revealed: number;
   started: number;
   threadsLeft: number;
+  /** Prepare-job progress: threads + Santa task cards delivered. */
+  prepared: number;
+  /** Recommendation phase: locked-in / awaiting the giftee's reply. */
+  recoFinal: number;
+  recoPending: number;
   /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
   groupSizes: number[];
   lastSync: number | null;
@@ -22,7 +27,10 @@ export interface PanelStats {
 
 export async function panelStats(env: Env, event: EventRow | null): Promise<PanelStats> {
   if (!event) {
-    return { count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0, groupSizes: [], lastSync: null, activeJob: null };
+    return {
+      count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0,
+      prepared: 0, recoFinal: 0, recoPending: 0, groupSizes: [], lastSync: null, activeJob: null,
+    };
   }
   const agg = await env.DB.prepare(
     `SELECT COUNT(*) AS count,
@@ -30,9 +38,15 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
             COALESCE(SUM(doc_readonly), 0) AS flipped,
             COALESCE(SUM(reveal_posted), 0) AS revealed,
             COALESCE(SUM(wrote), 0) AS started,
-            COALESCE(SUM(CASE WHEN thread_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS threadsLeft
+            COALESCE(SUM(CASE WHEN thread_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS threadsLeft,
+            COALESCE(SUM(reco_card_posted), 0) AS prepared,
+            COALESCE(SUM(CASE WHEN reco_status = 'FINAL' THEN 1 ELSE 0 END), 0) AS recoFinal,
+            COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS recoPending
      FROM signups WHERE event_id = ?1`,
-  ).bind(event.event_id).first<{ count: number; launched: number; flipped: number; revealed: number; started: number; threadsLeft: number }>();
+  ).bind(event.event_id).first<{
+    count: number; launched: number; flipped: number; revealed: number; started: number;
+    threadsLeft: number; prepared: number; recoFinal: number; recoPending: number;
+  }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -49,6 +63,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     revealed: agg?.revealed ?? 0,
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
+    prepared: agg?.prepared ?? 0,
+    recoFinal: agg?.recoFinal ?? 0,
+    recoPending: agg?.recoPending ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
@@ -123,7 +140,8 @@ export function renderManagerPanel(
             `**Topic:** ${e.topic ?? '*not set*'}\n` +
             `**Sign-up deadline:** ${deadline}\n` +
             `**Timezone:** ${e.tz ?? '*not set*'} · **Auto-stop:** ${e.auto_stop ? 'on' : 'off'}\n` +
-            `${googleLine(guild)}\n\n**Sign-up form items** (max 9):\n${itemLines}`,
+            `**Sorry😞 budget:** each person can decline **${e.max_declines}** recommendation(s)\n` +
+            `${googleLine(guild)}\n\n**Sign-up form** — built-in: *Link of your MAL/AniList* · custom items (max 9):\n${itemLines}`,
         })],
         components: [
           row(
@@ -168,7 +186,7 @@ export function renderManagerPanel(
           title: `🔀 Matching — ${e.topic}`,
           description:
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate**.\n${googleLine(guild)}`,
+            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
         })],
         components: [
           row(...[
@@ -177,7 +195,51 @@ export function renderManagerPanel(
             btn('ax:shuffle', '🔀 Shuffle'),
             btn('ax:validate', '✅ Validate'),
           ].filter(Boolean) as unknown[]),
-          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:launch', '🚀 Launch', Style.SUCCESS), abortBtn()),
+          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:reco_start', '🎯 Start Recommending', Style.SUCCESS), abortBtn()),
+        ],
+      };
+    }
+    case 'PREPARING': {
+      const remaining = Math.max(0, stats.count - stats.prepared);
+      const eta = Math.max(1, Math.ceil(remaining / cfg.jobBatch));
+      return {
+        content: '',
+        embeds: [embed({
+          title: `🎯 Preparing — ${e.topic}`,
+          description:
+            `Creating private threads and delivering Santa missions… **${stats.prepared} / ${stats.count}** · ~${eta} min remaining (automatic)` +
+            stallLine(stats.activeJob) + abortingLine(stats),
+        })],
+        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
+      };
+    }
+    case 'RECOMMENDING': {
+      const waiting = Math.max(0, stats.count - stats.recoFinal - stats.recoPending);
+      const ready = stats.recoFinal === stats.count && stats.count > 0;
+      return {
+        content: '',
+        embeds: [embed({
+          title: `🎯 Recommending — ${e.topic}`,
+          description:
+            `**${stats.recoFinal} / ${stats.count}** picks locked in · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
+            `Each person may send a pick back **${e.max_declines}** time(s); after that the next pick locks automatically.\n` +
+            (ready
+              ? `✅ **Everyone's pick is locked in — ready to 🚀 Launch.**`
+              : `Launch unlocks once every pick is locked. **⏩ Force-finalize** locks the ⏳ pending ones; 📣 nudges the stragglers.`) +
+            `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
+        })],
+        components: [
+          row(...[
+            sheetBtn,
+            btn('ax:reco_view', '📊 View Status'),
+            btn('ax:remind', '📣 Remind Now'),
+          ].filter(Boolean) as unknown[]),
+          row(
+            btn('ax:force_final', '⏩ Force-finalize'),
+            btn('ax:back_matching', '↩ Back to Matching'),
+            btn('ax:launch', '🚀 Launch', ready ? Style.SUCCESS : Style.SECONDARY),
+            abortBtn(),
+          ),
         ],
       };
     }
@@ -189,7 +251,7 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🚀 Launching — ${e.topic}`,
           description:
-            `**${stats.launched} / ${stats.count}** assignments delivered · ~${eta} min remaining (automatic)` +
+            `**${stats.launched} / ${stats.count}** review docs + assignment cards delivered · ~${eta} min remaining (automatic)` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
@@ -250,10 +312,14 @@ export function renderManagerPanel(
 
 // ------------------------------------------------------ participant panel
 
-const HOW_IT_WORKS =
-  'Submit one anime recommendation. You’ll receive another participant’s pick at random, ' +
-  'watch the full season, and write a review in a Google Doc by the deadline. ' +
-  'Who recommended yours stays secret until the reveal. 🎁';
+const howItWorks = (maxDeclines: number): string =>
+  'Sign up with a link to your MAL/AniList. You’ll be secretly assigned another participant — ' +
+  'study their list and recommend an anime just for them, while your own Secret Santa picks one for you. ' +
+  (maxDeclines > 0
+    ? `Not feeling a pick? Send it back with Sorry😞 (up to **${maxDeclines}** time${maxDeclines > 1 ? 's' : ''}). `
+    : 'The pick you receive is final — trust your Santa. ') +
+  'Then watch the full season and write a review in a Google Doc by the deadline. ' +
+  'Who picked yours stays secret until the reveal. 🎁';
 
 export function renderParticipantPanel(
   cfg: Cfg, guild: GuildRow, event: EventRow | null, stats: PanelStats, itemCount: number,
@@ -279,8 +345,8 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
-            `${HOW_IT_WORKS}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
-            `**Sign-up form:** anime pick + ${itemCount} question(s)${banner}`,
+            `${howItWorks(e.max_declines)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
+            `**Sign-up form:** your MAL/AniList link + ${itemCount} question(s)${banner}`,
         })],
         components: [row(
           btn('ax:signup', '📝 Sign Up', Style.PRIMARY),
@@ -298,12 +364,34 @@ export function renderParticipantPanel(
         })],
         components: [],
       };
+    case 'PREPARING':
+      return {
+        content: '',
+        embeds: [embed({
+          title: `${title} — ${e.topic}`,
+          description:
+            '🎯 Matching done! Your **private thread** is being created — it will tell you who *you* are the Secret Santa for. A few minutes.',
+        })],
+        components: [],
+      };
+    case 'RECOMMENDING':
+      return {
+        content: '',
+        embeds: [embed({
+          title: `${title} — ${e.topic}`,
+          description:
+            `🎯 **Recommendation time!** Check your private thread: pick an anime for your person, and answer the pick you receive with **Thank you!😊** or **Sorry😞**` +
+            `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''})` : ''}.\n` +
+            `**${stats.recoFinal} / ${stats.count}** picks locked in — the exchange launches when everyone's is.`,
+        })],
+        components: [row(btn('ax:reco_me', '🎯 My Status', Style.PRIMARY))],
+      };
     case 'LAUNCHING':
       return {
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
-          description: '🚀 Matching done — assignments are being delivered now. Your private thread will appear within a few minutes.',
+          description: '🚀 All picks are locked in — review docs and assignment cards are being delivered to your thread now.',
         })],
         components: [],
       };

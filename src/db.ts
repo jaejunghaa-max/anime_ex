@@ -2,7 +2,7 @@
 // respond" (spec §2.4 #4); anything heavier lives in jobs.
 
 import type { Env, EventRow, EventState, FormItem, GuildRow, SignupRow } from './types';
-import { now } from './util';
+import { buildLoops, now, type LoopMap } from './util';
 
 export function getGuild(env: Env, guildId: string): Promise<GuildRow | null> {
   return env.DB.prepare('SELECT * FROM guilds WHERE guild_id = ?1').bind(guildId).first<GuildRow>();
@@ -59,11 +59,38 @@ export async function dbBatchChunked(env: Env, stmts: D1PreparedStatement[]): Pr
   }
 }
 
+/**
+ * Ordered rows + loop map + this-user resolution in one read — the shape every
+ * RECOMMENDING interaction needs. santa[idx] recommends FOR idx; the row this
+ * user recommends for is recipient[idx] (their "giftee").
+ */
+export async function loopContext(env: Env, eventId: number): Promise<{
+  all: SignupRow[];
+  loops: LoopMap;
+  indexOfUser: (userId: string) => number;
+}> {
+  const all = await orderedSignups(env, eventId);
+  const loops = buildLoops(all.map((s) => s.group_no));
+  return { all, loops, indexOfUser: (userId) => all.findIndex((s) => s.user_id === userId) };
+}
+
 export function answersOf(s: { answers_json: string }): Record<string, string> {
   try {
     return JSON.parse(s.answers_json) as Record<string, string>;
   } catch {
     return {};
+  }
+}
+
+export interface DeclinedEntry { mal_id: number; title: string }
+
+/** Titles a giftee has already sent back — their Santa may not re-pick these. */
+export function declinedOf(s: Pick<SignupRow, 'reco_declined_json'>): DeclinedEntry[] {
+  try {
+    const arr = JSON.parse(s.reco_declined_json) as DeclinedEntry[];
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
   }
 }
 

@@ -108,7 +108,7 @@ export async function runValidate(
   errors.push(...parse.errors);
 
   const n = valid.length;
-  if (errors.length === 0 && n < 2) errors.push(`Need at least 2 participants to launch (currently ${n}).`);
+  if (errors.length === 0 && n < 2) errors.push(`Need at least 2 participants to run an exchange (currently ${n}).`);
 
   let sizes: number[] = [];
   if (errors.length === 0) {

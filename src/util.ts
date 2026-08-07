@@ -189,6 +189,31 @@ export function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
+/**
+ * v3 built-in signup item: link to the participant's MAL/AniList list.
+ * Accepts myanimelist.net / anilist.co (optionally www., scheme optional →
+ * normalized to https) with a non-root path, so the Santa lands on an actual
+ * profile/list page. Returns the normalized URL or null. Strict on purpose:
+ * the URL is later embedded in a link button, where garbage would 400 the
+ * whole task-card message.
+ */
+export function normalizeListUrl(raw: string): string | null {
+  const t = raw.trim().replace(/\s+/g, '');
+  if (!t || t.length > 300) return null;
+  const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase().replace(/^www\./, '');
+  if (host !== 'myanimelist.net' && host !== 'anilist.co') return null;
+  if (url.pathname === '/' || url.pathname === '') return null;
+  url.protocol = 'https:';
+  return url.toString();
+}
+
 export function displayNameOf(member: { nick?: string | null; user: { global_name?: string | null; username: string } }): string {
   return sanitizeName(member.nick ?? member.user.global_name ?? member.user.username);
 }

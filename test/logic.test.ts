@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildLoops, chunkLines, dealSizes, epochToZoned, isValidTz, loopsPhrase, parseReminderDays,
-  sanitizeName, shuffled, zonedToEpoch,
+  buildLoops, chunkLines, dealSizes, epochToZoned, isValidTz, loopsPhrase, normalizeListUrl,
+  parseReminderDays, sanitizeName, shuffled, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
-import { a1, colLetter, headerRow, layoutOf } from '../src/sheet';
+import { a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell } from '../src/sheet';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
 import type { FormItem } from '../src/types';
@@ -54,6 +54,12 @@ describe('loop math (santa = next row within the group)', () => {
     expect(santa[0]).toBe(1);
     expect(recipient[0]).toBe(1);  // same person both ways
     expect(santa[1]).toBe(0);
+  });
+  it('v3 direction: your Santa (next row) picks FOR you; you pick for the previous row', () => {
+    const { santa, recipient } = buildLoops([1, 1, 1]);
+    // Row 0's pick lands on recipient[0] = row 2; row 0's own anime comes from santa[0] = row 1.
+    expect(recipient[0]).toBe(2);
+    expect(santa[2]).toBe(0);      // …and row 2 agrees: their Santa is row 0
   });
   it('handles non-contiguous same-group rows in row order', () => {
     const { santa } = buildLoops([1, 2, 1, 2]);
@@ -181,21 +187,58 @@ describe('sheet layout (§8.3)', () => {
   it("quotes the tab title in A1 ranges (hyphen breaks Google's parser unquoted)", () => {
     expect(a1('A1:T21')).toBe("'Sign-Ups'!A1:T21");
   });
-  it('header marks hidden items, places Group before the derived block', () => {
+  it('header marks hidden items, places Group before the derived block (v3 layout)', () => {
     const h = headerRow(items);
     expect(h[0]).toBe('Row #');
     expect(h[1]).toContain('User ID');
-    expect(h[5]).toBe('Genre');          // visible → no lock
-    expect(h[6]).toBe('Why 🔒');         // hidden → lock suffix
+    expect(h[3]).toBe('MAL/AniList');    // v3: one list-link column replaces Anime + MAL
+    expect(h[4]).toBe('Genre');          // visible → no lock
+    expect(h[5]).toBe('Why 🔒');         // hidden → lock suffix
     const layout = layoutOf(items);
     expect(h[layout.groupCol - 1]).toBe('Group');       // manager-editable (rev. 3)
     expect(h[layout.santaCol - 1]).toBe('Secret Santa');
-    expect(h[layout.lengthCol - 1]).toBe('Review Length'); // renamed from Chars; Last Edited/Wrote dropped
+    expect(h[layout.recoCol - 1]).toBe('Recommendation'); // v3: the Santa's pick for this row
+    expect(h[layout.recoStatusCol - 1]).toBe('Rec. Status');
+    expect(h[layout.lengthCol - 1]).toBe('Review Length');
     expect(h[layout.scoreCol - 1]).toBe('Score');
-    expect(h).not.toContain('Wrote');
-    expect(h).not.toContain('Last Edited');
-    expect(layout.groupCol).toBe(8);     // A-E fixed + 2 items + Group
+    expect(h).not.toContain('Anime');
+    expect(h).not.toContain('Given Anime');
+    expect(layout.groupCol).toBe(7);     // A-D fixed + 2 items + Group
     expect(h).toHaveLength(layout.lastCol);
+  });
+  it('reco cells mirror the approve/decline state machine', () => {
+    expect(recoCell({ reco_title: 'Frieren', reco_year: 2023 })).toBe('Frieren (2023)');
+    expect(recoCell({ reco_title: 'Frieren', reco_year: null })).toBe('Frieren');
+    expect(recoCell({ reco_title: null, reco_year: null })).toBe('');
+    expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 0 })).toBe('');
+    expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 2 })).toBe('😞 declined ×2');
+    expect(recoStatusCell({ reco_status: 'PENDING', reco_final_via: null, declines_used: 0 })).toBe('⏳ awaiting reply');
+    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'APPROVED', declines_used: 1 })).toBe('✅ approved');
+    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'EXHAUSTED', declines_used: 2 })).toBe('🔒 locked (declines used up)');
+    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'FORCED', declines_used: 0 })).toBe('⏩ finalized by manager');
+  });
+});
+
+describe('MAL/AniList link validation (v3 built-in signup item)', () => {
+  it('accepts profile and list URLs on both sites', () => {
+    expect(normalizeListUrl('https://myanimelist.net/profile/Xinil')).toBe('https://myanimelist.net/profile/Xinil');
+    expect(normalizeListUrl('https://myanimelist.net/animelist/Xinil')).toBe('https://myanimelist.net/animelist/Xinil');
+    expect(normalizeListUrl('https://anilist.co/user/somebody/animelist')).toBe('https://anilist.co/user/somebody/animelist');
+  });
+  it('normalizes scheme-less and www-prefixed input to https', () => {
+    expect(normalizeListUrl('myanimelist.net/profile/you')).toBe('https://myanimelist.net/profile/you');
+    expect(normalizeListUrl('www.anilist.co/user/you')).toBe('https://www.anilist.co/user/you');
+    expect(normalizeListUrl('http://myanimelist.net/profile/you')).toBe('https://myanimelist.net/profile/you');
+    expect(normalizeListUrl('  https://anilist.co/user/you  ')).toBe('https://anilist.co/user/you');
+  });
+  it('rejects other hosts, bare domains and garbage', () => {
+    expect(normalizeListUrl('https://example.com/profile/you')).toBeNull();
+    expect(normalizeListUrl('https://myanimelist.net')).toBeNull();     // root path tells the Santa nothing
+    expect(normalizeListUrl('https://myanimelist.net/')).toBeNull();
+    expect(normalizeListUrl('https://evil.myanimelist.net.example.com/x')).toBeNull();
+    expect(normalizeListUrl('not a url')).toBeNull();
+    expect(normalizeListUrl('')).toBeNull();
+    expect(normalizeListUrl('x'.repeat(400))).toBeNull();
   });
 });
 

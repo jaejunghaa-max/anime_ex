@@ -1,22 +1,22 @@
-// Batched job engine (spec §7.4): every participant-scaling fan-out (launch,
-// close, sync, finish) drains at most JOB_BATCH units per cron tick, with
-// per-unit completion markers on the signups row — re-entry is trivially safe
-// and a redeploy mid-job loses nothing. The dispatcher never gives up; it
+// Batched job engine (spec §7.4): every participant-scaling fan-out (prepare,
+// launch, close, sync, finish) drains at most JOB_BATCH units per cron tick,
+// with per-unit completion markers on the signups row — re-entry is trivially
+// safe and a redeploy mid-job loses nothing. The dispatcher never gives up; it
 // retries every tick and surfaces last_error on the panel after 5 failures.
 
-import type { Cfg, Env, EventRow, FormItem, GuildRow, JobRow, SignupRow } from './types';
+import type { Cfg, Env, EventRow, GuildRow, JobRow, SignupRow } from './types';
 import {
-  addThreadMember, btn, createPrivateThread, deleteChannel, DiscordApiError, embed, linkBtn,
-  postMessage, row, Style,
+  addThreadMember, createPrivateThread, deleteChannel, DiscordApiError, embed, postMessage,
 } from './discord';
-import { answersOf, getItems, orderedSignups, transition } from './db';
+import { getItems, orderedSignups, transition } from './db';
+import { assignmentCard, revealCard, taskCard } from './cards';
 import {
   createDoc, docUrl, driveExportText, driveFileMeta, driveFlipAnyoneToReader, driveShareAnyone,
   GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
 import { repaintPanels } from './panels';
 import { lengthCell, rewriteSheet, scoreCell, writeReviewLinks, writeStatusCells } from './sheet';
-import { buildLoops, chunkLines, epochToZoned, now, truncate, ts } from './util';
+import { buildLoops, chunkLines, epochToZoned, now, truncate } from './util';
 
 /** Convergence self-heal: one full sheet rewrite from D1, best-effort. Run at
  *  job completion so any drift (failed cell writes, layout changes, manual
@@ -69,6 +69,7 @@ export async function drainJobs(env: Env, cfg: Cfg): Promise<void> {
 
   try {
     switch (job.kind) {
+      case 'prepare': await prepareTick(env, cfg, guild, event, job); break;
       case 'launch': await launchTick(env, cfg, guild, event, job); break;
       case 'close': await closeTick(env, cfg, guild, event, job); break;
       case 'sync': await syncTick(env, cfg, guild, event, job); break;
@@ -92,51 +93,72 @@ function markDone(env: Env, job: JobRow): Promise<unknown> {
   return env.DB.prepare('UPDATE jobs SET done_at = ?1 WHERE id = ?2').bind(now(), job.id).run();
 }
 
-// ----------------------------------------------------------------- launch
-
-function assignmentCard(
-  event: EventRow, me: SignupRow, santa: SignupRow, recipient: SignupRow, items: FormItem[],
-): Record<string, unknown> {
-  // given(i) = R_{santa(i)} — the next row's recommendation (§1).
-  const visibleItems = items.filter((it) => it.visible_to_recommender);
-  const recipientAnswers = answersOf(recipient);
-  const visibleLines = visibleItems
-    .map((it) => `• **${it.label}:** ${recipientAnswers[String(it.item_id)] || '—'}`)
-    .join('\n');
-  const deadline = event.review_deadline!;
-  return {
-    content: `<@${me.user_id}> your assignment is here! 🎁`,
-    embeds: [
-      embed({
-        title: `🎬 Your anime: ${santa.anime_title}${santa.anime_year ? ` (${santa.anime_year})` : ''}`,
-        url: santa.anime_url,
-        description:
-          `${santa.anime_type ?? '?'} · ${santa.anime_episodes ?? '?'} episodes · [MAL](${santa.anime_url})\n` +
-          `Watch the **full season**, then write your review in your doc below.\n` +
-          `*Who recommended it stays secret until the reveal.*`,
-        image: santa.anime_image ?? undefined,
-        fields: [{
-          name: '⏰ Review deadline',
-          value: `${ts(deadline)} (${ts(deadline, 'R')})`,
-        }],
-      }),
-      embed({
-        title: `🎁 Your recommendation: ${me.anime_title}`,
-        description:
-          `It went to **${recipient.display_name}** (<@${recipient.user_id}>).` +
-          (visibleLines ? `\n\nWhat they shared with you:\n${visibleLines}` : ''),
-      }),
-    ],
-    components: [row(...[
-      me.doc_url ? linkBtn(me.doc_url, '📝 Open your review doc') : null,
-      btn('ax:score', '⭐ Score it /10', Style.PRIMARY),
-    ].filter(Boolean) as unknown[])],
-  };
+/** Create-or-reuse the participant's private thread and add them to it. */
+async function ensureThread(env: Env, guild: GuildRow, s: SignupRow): Promise<string> {
+  if (!s.thread_id) {
+    const thread = await createPrivateThread(env, guild.participant_channel_id!, `🎁 ${s.display_name}`);
+    s.thread_id = thread.id;
+    await env.DB.prepare('UPDATE signups SET thread_id = ?1, updated_at = ?2 WHERE signup_id = ?3')
+      .bind(thread.id, now(), s.signup_id).run();
+  }
+  await addThreadMember(env, s.thread_id, s.user_id).catch((e) => {
+    // Member left the server → keep the row, the loop stays intact (§14).
+    console.error(`thread member add failed for ${s.user_id}`, e);
+  });
+  return s.thread_id;
 }
+
+// ---------------------------------------------------------------- prepare
+// MATCHING → PREPARING → RECOMMENDING. Per unit: create the private thread
+// (threads now exist for the whole recommending phase, so approvals and
+// declines can ping people) and post the Santa task card — who the
+// participant recommends for, their list link, and the Recommend button.
+
+async function prepareTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
+  const all = await orderedSignups(env, event.event_id);
+  const loops = buildLoops(all.map((s) => s.group_no));
+  const pending = all
+    .map((s, idx) => ({ s, idx }))
+    .filter(({ s }) => !s.reco_card_posted)
+    .slice(0, cfg.jobBatch);
+
+  if (pending.length === 0) {
+    await transition(env, event.event_id, 'PREPARING', 'RECOMMENDING');
+    await markDone(env, job);
+    await repaintPanels(env, cfg, guild.guild_id);
+    return;
+  }
+
+  const items = await getItems(env, event.event_id);
+  const stmts: D1PreparedStatement[] = [];
+  for (const { s, idx } of pending) {
+    // giftee = the row this participant recommends for (previous row in the loop).
+    const giftee = all[loops.recipient[idx]!]!;
+    const threadId = await ensureThread(env, guild, s);
+    await postMessage(env, threadId, taskCard(event, s, giftee, items));
+    stmts.push(env.DB.prepare(
+      'UPDATE signups SET reco_card_posted = 1, updated_at = ?1 WHERE signup_id = ?2',
+    ).bind(now(), s.signup_id));
+  }
+  await env.DB.batch(stmts);
+
+  const left = await env.DB
+    .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_card_posted = 0')
+    .bind(event.event_id).first<{ n: number }>();
+  if ((left?.n ?? 0) === 0) {
+    await transition(env, event.event_id, 'PREPARING', 'RECOMMENDING');
+    await markDone(env, job);
+  }
+  await repaintPanels(env, cfg, guild.guild_id); // PREPARING panel counts up
+}
+
+// ----------------------------------------------------------------- launch
+// RECOMMENDING → LAUNCHING → RUNNING. Every pick is FINAL by now; per unit:
+// review doc for the locked-in anime + assignment card in the existing thread.
 
 async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
   const all = await orderedSignups(env, event.event_id);
-  const loops = buildLoops(all.map((s) => s.group_no)); // santa = next row within the group (§1)
+  const loops = buildLoops(all.map((s) => s.group_no));
   const pending = all
     .map((s, idx) => ({ s, idx }))
     .filter(({ s }) => !s.assignment_posted)
@@ -155,18 +177,18 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
   const finalStmts: D1PreparedStatement[] = [];
 
   for (const { s, idx } of pending) {
-    const santa = all[loops.santa[idx]!]!;
-    const recipient = all[loops.recipient[idx]!]!;
+    const myGiftee = all[loops.recipient[idx]!]!;
+    const anime = s.reco_title ?? 'their anime';
 
     // Docs sub-steps persist immediately after creation so a crash between
     // calls never duplicates a doc/thread on the next tick (§7.4).
     if (!s.doc_id) {
-      const id = await createDoc(env, guild, `Review of ${santa.anime_title} by ${s.display_name}`);
+      const id = await createDoc(env, guild, `Review of ${anime} by ${s.display_name}`);
       s.doc_id = id;
       s.doc_url = docUrl(id);
       await env.DB.prepare('UPDATE signups SET doc_id = ?1, doc_url = ?2, updated_at = ?3 WHERE signup_id = ?4')
         .bind(id, s.doc_url, now(), s.signup_id).run();
-      await writeDocTemplate(env, guild, id, santa.anime_title, s.display_name, deadlineText);
+      await writeDocTemplate(env, guild, id, anime, s.display_name, deadlineText);
       const template = await driveExportText(env, guild, id);
       s.template_chars = template.length;
     }
@@ -175,17 +197,10 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
       await env.DB.prepare('UPDATE signups SET perm_id = ?1, template_chars = ?2, updated_at = ?3 WHERE signup_id = ?4')
         .bind(s.perm_id, s.template_chars, now(), s.signup_id).run();
     }
-    if (!s.thread_id) {
-      const thread = await createPrivateThread(env, guild.participant_channel_id!, `🎁 ${s.display_name}`);
-      s.thread_id = thread.id;
-      await env.DB.prepare('UPDATE signups SET thread_id = ?1, updated_at = ?2 WHERE signup_id = ?3')
-        .bind(thread.id, now(), s.signup_id).run();
-    }
-    await addThreadMember(env, s.thread_id, s.user_id).catch((e) => {
-      // Member left the server → keep the row, the loop stays intact (§14).
-      console.error(`thread member add failed for ${s.user_id}`, e);
-    });
-    await postMessage(env, s.thread_id, assignmentCard(event, s, santa, recipient, items));
+    // Threads were created by the prepare job; ensure covers the rare case of
+    // one being deleted mid-event.
+    const threadId = await ensureThread(env, guild, s);
+    await postMessage(env, threadId, assignmentCard(event, s, myGiftee));
 
     finalStmts.push(env.DB.prepare(
       'UPDATE signups SET assignment_posted = 1, updated_at = ?1 WHERE signup_id = ?2',
@@ -211,30 +226,9 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 
 // ------------------------------------------------------------------ close
 
-function revealCard(me: SignupRow, santa: SignupRow, recipient: SignupRow): Record<string, unknown> {
-  const reviewTitle = `Review of ${me.anime_title} by ${recipient.display_name}`;
-  // "{name} (@name) gave your recommendation {anime} 8 stars:" — falls back to
-  // review-only phrasing when they never scored.
-  const verdict = recipient.score !== null
-    ? `gave your recommendation **${me.anime_title}** **⭐ ${recipient.score} stars**`
-    : `reviewed your recommendation **${me.anime_title}**`;
-  return {
-    content: `<@${me.user_id}> the reveal is here! 🎭`,
-    embeds: [embed({
-      title: '🎭 The reveal',
-      description:
-        `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>) — ` +
-        `they recommended **${santa.anime_title}** for you.\n\n` +
-        `**${recipient.display_name}** (<@${recipient.user_id}>) ${verdict}` +
-        `${recipient.doc_url ? ':' : ' — but their review doc is missing.'}`,
-    })],
-    components: recipient.doc_url ? [row(linkBtn(recipient.doc_url, `📖 ${truncate(reviewTitle, 70)}`))] : [],
-  };
-}
-
 async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: SignupRow[]): Promise<void> {
-  // One section per loop (§6.4): "**Loop 1** (10)" then its cycle in block
-  // order; single-group events get one untitled section.
+  // One section per loop (§6.4): "**Loop 1** (10)" then one line per member in
+  // block order; single-group events get one untitled section.
   const loops = buildLoops(all.map((s) => s.group_no));
   const multi = loops.groups.size > 1;
   const lines: string[] = [];
@@ -242,15 +236,13 @@ async function postGallery(env: Env, guild: GuildRow, event: EventRow, all: Sign
     if (multi) lines.push(`**Loop ${g}** (${members.length})`);
     for (const i of members) {
       const s = all[i]!;
-      const recipient = all[loops.recipient[i]!]!;
-      // "J (@J) recommended X → received 7 stars from rabbit (@rabbit) (read review)"
-      const link = recipient.doc_url ? ` ([read review](${recipient.doc_url}))` : '';
-      const verdict = recipient.score !== null
-        ? `received **⭐ ${recipient.score} stars** from`
-        : 'reviewed by';
+      const santa = all[loops.santa[i]!]!;
+      // "J (@J) picked X for rabbit (@rabbit) — ⭐ 8 (read review)"
+      const link = s.doc_url ? ` ([read review](${s.doc_url}))` : '';
+      const verdict = s.score !== null ? ` — **⭐ ${s.score} stars**` : '';
       lines.push(
-        `🎁 **${s.display_name}** (<@${s.user_id}>) recommended **${s.anime_title}** → ` +
-        `${verdict} **${recipient.display_name}** (<@${recipient.user_id}>)${link}`,
+        `🎁 **${santa.display_name}** (<@${santa.user_id}>) picked **${s.reco_title ?? '?'}** for ` +
+        `**${s.display_name}** (<@${s.user_id}>)${verdict}${link}`,
       );
     }
   }
@@ -285,7 +277,7 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
   const payload = JSON.parse(job.payload_json || '{}') as { gallery?: boolean };
 
   // Phase 1 — ALL docs flip read-only before ANY reveal link is posted (§7.6,
-  // M6: reveal cards link the *recipient's* doc, so per-unit interleaving
+  // M6: reveal cards link the *giftee's* doc, so per-unit interleaving
   // would leak an editable doc).
   const toFlip = all.filter((s) => !s.doc_readonly).slice(0, cfg.jobBatch);
   if (toFlip.length > 0) {
@@ -319,9 +311,9 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
     const stmts: D1PreparedStatement[] = [];
     for (const { s, idx } of toReveal) {
       const santa = all[loops.santa[idx]!]!;
-      const recipient = all[loops.recipient[idx]!]!;
+      const myGiftee = all[loops.recipient[idx]!]!;
       if (s.thread_id) {
-        await postMessage(env, s.thread_id, revealCard(s, santa, recipient)).catch((e) => {
+        await postMessage(env, s.thread_id, revealCard(s, santa, myGiftee)).catch((e) => {
           if (!(e instanceof DiscordApiError && (e.status === 404 || e.status === 403))) throw e;
           console.error(`reveal post failed for ${s.user_id} (thread gone)`, e);
         });

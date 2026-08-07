@@ -1,19 +1,23 @@
-// Two-step signup wizard (spec §6.2, decision #3): Modal A (keyword + items
-// 1–4) → MAL picker → Modal B (items 5–9) → summary card → confirm. Wizard
+// Signup wizard (v3): Modal A (MAL/AniList link + items 1–4) → optional
+// Modal B (items 5–9) → summary card → confirm. No anime is picked at signup
+// anymore — the built-in form item is the participant's list link, which their
+// Secret Santa later uses to choose FOR them (handlers/reco.ts). Wizard
 // progress lives in signup_drafts because every modal/select is a separate
 // stateless interaction; drafts expire after 30 minutes.
 
-import type { AnimeCandidate } from '../mal';
-import { searchAnime } from '../mal';
 import type { DraftRow, FormItem } from '../types';
 import { modalFields } from '../types';
-import { btn, editOriginal, embed, linkBtn, modalSelect, modalText, respond, row, stringSelect, Style } from '../discord';
+import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
 import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
 import { rewriteSheet, writeScoreCell } from '../sheet';
-import { buildLoops, now, truncate } from '../util';
-import { bg, HCtx, repaint, stale, throttledCountRepaint } from './common';
+import { normalizeListUrl, now } from '../util';
+import { bg, HCtx, stale, throttledCountRepaint } from './common';
 
 const DRAFT_TTL = 30 * 60;
+
+// The list link travels inside partial_answers_json under this key — item ids
+// are numeric strings, so it can never collide.
+const LINK_KEY = 'link';
 
 // ----------------------------------------------------------------- drafts
 
@@ -69,10 +73,12 @@ function itemComponent(it: FormItem, answers: Record<string, string>): Record<st
   return modalText(`item:${it.item_id}`, it.label, { paragraph: true, value: prev ?? '', max: 500 });
 }
 
-function modalA(items: FormItem[], keyword: string, answers: Record<string, string>): Response {
+function modalA(items: FormItem[], answers: Record<string, string>): Response {
   return respond.modal('axm:signup_a', 'Sign up — step 1', [
-    modalText('kw', 'Anime title keyword (English or Japanese)', {
-      value: keyword, max: 100, placeholder: 'e.g. Frieren / 葬送のフリーレン',
+    modalText(LINK_KEY, 'Link of your MAL/AniList', {
+      value: answers[LINK_KEY] ?? '', max: 300,
+      placeholder: 'https://myanimelist.net/profile/you — or anilist.co/user/you',
+      description: 'Your Secret Santa studies this list to pick your anime',
     }),
     ...itemsA(items).map((it) => itemComponent(it, answers)),
   ]);
@@ -100,13 +106,23 @@ function collectAnswers(items: FormItem[], fields: Map<string, string>): Record<
   return out;
 }
 
+/** Answers to prefill the wizard with: draft first, else the stored signup. */
+function prefillAnswers(
+  draft: DraftRow | null,
+  existing: { answers_json: string; list_url: string } | null,
+): Record<string, string> {
+  if (draft) return parseJson<Record<string, string>>(draft.partial_answers_json, {});
+  if (existing) return { ...answersOf(existing), [LINK_KEY]: existing.list_url };
+  return {};
+}
+
 // ------------------------------------------------------------ wizard steps
 
 /** [📝 Sign Up] / [✏ Edit My Sign-Up] → Modal A, prefilled from draft ?? existing signup. */
 export async function signupStart(c: HCtx, editing: boolean): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') {
-    return stale(c, e && ['MATCHING', 'LAUNCHING', 'RUNNING', 'CLOSING', 'REVEALED'].includes(e.state)
+    return stale(c, e && ['MATCHING', 'PREPARING', 'RECOMMENDING', 'LAUNCHING', 'RUNNING', 'CLOSING', 'REVEALED'].includes(e.state)
       ? 'Sign-ups are closed.' : 'No sign-up is open right now.');
   }
   const existing = await getSignup(c.env, e.event_id, c.userId);
@@ -121,112 +137,55 @@ export async function signupStart(c: HCtx, editing: boolean): Promise<Response> 
   }
   const items = await getItems(c.env, e.event_id);
   const draft = await loadDraft(c, e.event_id);
-  const answers = draft
-    ? parseJson<Record<string, string>>(draft.partial_answers_json, {})
-    : existing ? answersOf(existing) : {};
-  const keyword = draft?.keyword ?? existing?.anime_title ?? '';
-  return modalA(items, keyword, answers);
+  return modalA(items, prefillAnswers(draft, existing));
 }
 
-/** Modal A submit → deferred ephemeral → MAL search → picker (§13.1 row 3). */
+/**
+ * Modal A submit — pure D1 work (no search anymore), so it responds directly:
+ * link validation error, the Continue (2/2) step, or the summary card.
+ * Opened from the panel (public message) → fresh ephemeral; opened from a
+ * wizard button (flags 64) → update that ephemeral in place (§13.1).
+ */
 export async function signupModalA(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const items = await getItems(c.env, e.event_id);
   const fields = modalFields(c.i.data?.components);
-  const keyword = (fields.get('kw') ?? '').trim();
+  const rawLink = (fields.get(LINK_KEY) ?? '').trim();
   const prevDraft = await loadDraft(c, e.event_id);
   const answers = {
     ...parseJson<Record<string, string>>(prevDraft?.partial_answers_json ?? null, {}),
     ...collectAnswers(itemsA(items), fields),
+    [LINK_KEY]: rawLink,
   };
-  // Opened from the panel (public message) → new deferred ephemeral. Opened
-  // from a wizard button ([Search again], flags 64) → update that message in
-  // place; type 6/7 on a panel-sourced modal would edit the shared panel.
   const fromEphemeral = ((c.i.message?.flags ?? 0) & 64) !== 0;
-  bg(c, async () => {
-    if (!keyword) {
-      await editOriginal(c.env, c.i.token, {
-        content: '⚠ Enter an anime title keyword.',
-        components: [row(btn('ax:signup_again', '🔍 Search again', Style.PRIMARY))],
-      });
-      return;
-    }
-    let candidates: AnimeCandidate[] = [];
-    let searchFailed = false;
-    try {
-      candidates = await searchAnime(c.env, c.cfg, keyword);
-    } catch (err) {
-      console.error('MAL search failed', err);
-      searchFailed = true;
-    }
-    await saveDraft(c, e.event_id, {
-      step: 'A_DONE',
-      keyword,
-      partial_answers_json: JSON.stringify(answers),
-      candidates_json: JSON.stringify(candidates),
-      chosen_json: prevDraft?.chosen_json ?? null,
-    });
-    if (searchFailed) {
-      // Also fires on keyword-shaped failures (e.g. the official MAL API
-      // rejects queries under 3 characters), so suggest both remedies.
-      await editOriginal(c.env, c.i.token, {
-        content: '⚠ Try a different keyword — or try again in a minute.',
-        embeds: [],
-        components: [row(btn('ax:signup_again', '🔍 Search again', Style.PRIMARY))],
-      });
-      return;
-    }
-    if (candidates.length === 0) {
-      await editOriginal(c.env, c.i.token, {
-        content: `😶 No MAL matches for **${truncate(keyword, 80)}**. Try another spelling (English or Japanese both work).`,
-        embeds: [],
-        components: [row(btn('ax:signup_again', '🔍 Search again', Style.PRIMARY))],
-      });
-      return;
-    }
-    await editOriginal(c.env, c.i.token, {
-      content: `🔎 Results for **${truncate(keyword, 80)}** — pick your anime:`,
-      embeds: [],
-      components: [
-        row(stringSelect('ax:signup_pick', 'Pick your anime…', candidates.map((a, idx) => ({
-          label: `${a.title} (${a.year ?? '?'} · ${a.type ?? '?'} · ${a.episodes ?? '?'} eps)`,
-          value: String(idx),
-          description: a.title_en ?? a.title_jp ?? undefined,
-        })))),
-        row(btn('ax:signup_again', '🔍 Search again')),
-      ],
-    });
-  });
-  return fromEphemeral ? respond.deferUpdate() : respond.deferEphemeral();
-}
+  const reply = (payload: Record<string, unknown>) =>
+    fromEphemeral ? respond.update(payload) : respond.ephemeral(payload);
 
-/** Picker select → store choice → Continue (2/2) or summary card. */
-export async function signupPick(c: HCtx): Promise<Response> {
-  const e = c.event;
-  if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
-  const draft = await loadDraft(c, e.event_id);
-  const candidates = parseJson<AnimeCandidate[]>(draft?.candidates_json ?? null, []);
-  const chosen = candidates[Number(c.i.data?.values?.[0] ?? -1)];
-  if (!draft || !chosen) {
-    return respond.update({
-      content: '⏳ This wizard expired — press **📝 Sign Up** on the panel to start again.',
-      embeds: [], components: [],
+  const link = normalizeListUrl(rawLink);
+  if (!link) {
+    await saveDraft(c, e.event_id, { step: 'A_DONE', partial_answers_json: JSON.stringify(answers) });
+    return reply({
+      content:
+        '⚠ That doesn\'t look like a MAL/AniList link. Use your profile or list URL, e.g.\n' +
+        '`https://myanimelist.net/profile/you` · `https://myanimelist.net/animelist/you` · `https://anilist.co/user/you`',
+      embeds: [],
+      components: [row(btn('ax:signup_again', '✏ Fix my sign-up', Style.PRIMARY))],
     });
   }
-  await saveDraft(c, e.event_id, { ...draft, step: 'PICKED', chosen_json: JSON.stringify(chosen) });
-  const items = await getItems(c.env, e.event_id);
+  answers[LINK_KEY] = link;
+  await saveDraft(c, e.event_id, { step: 'A_DONE', partial_answers_json: JSON.stringify(answers) });
   if (itemsB(items).length > 0) {
-    return respond.update({
-      content: `🎬 **${chosen.title}** (${chosen.year ?? '?'}) — one more step for the remaining questions.`,
+    return reply({
+      content: `🔗 List saved — one more step for the remaining questions.`,
       embeds: [],
       components: [row(
         btn('ax:signup_cont', 'Continue (2/2)', Style.PRIMARY),
-        btn('ax:signup_again', '🔍 Search again'),
+        btn('ax:signup_again', '✏ Back to step 1'),
       )],
     });
   }
-  return respond.update(await summaryCard(c, e.event_id, items, { ...draft, chosen_json: JSON.stringify(chosen) }));
+  return reply(summaryCard(items, answers));
 }
 
 /** [Continue (2/2)] → Modal B prefilled. */
@@ -234,7 +193,7 @@ export async function signupContinue(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const draft = await loadDraft(c, e.event_id);
-  if (!draft || !draft.chosen_json) {
+  if (!draft) {
     return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.' });
   }
   const items = await getItems(c.env, e.event_id);
@@ -251,7 +210,7 @@ export async function signupModalB(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const draft = await loadDraft(c, e.event_id);
-  if (!draft || !draft.chosen_json) {
+  if (!draft) {
     return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.' });
   }
   const items = await getItems(c.env, e.event_id);
@@ -259,51 +218,40 @@ export async function signupModalB(c: HCtx): Promise<Response> {
     ...parseJson<Record<string, string>>(draft.partial_answers_json, {}),
     ...collectAnswers(itemsB(items), modalFields(c.i.data?.components)),
   };
-  const merged = { ...draft, step: 'B_DONE' as const, partial_answers_json: JSON.stringify(answers) };
-  await saveDraft(c, e.event_id, merged);
-  return respond.update(await summaryCard(c, e.event_id, items, merged));
+  await saveDraft(c, e.event_id, { ...draft, step: 'B_DONE', partial_answers_json: JSON.stringify(answers) });
+  return respond.update(summaryCard(items, answers));
 }
 
-/** [🔍 Search again] → Modal A with previous values prefilled. */
+/** [✏ Fix my sign-up / Back to step 1] → Modal A with previous values prefilled. */
 export async function signupAgain(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const draft = await loadDraft(c, e.event_id);
+  const existing = await getSignup(c.env, e.event_id, c.userId);
   const items = await getItems(c.env, e.event_id);
-  return modalA(items, draft?.keyword ?? '', parseJson<Record<string, string>>(draft?.partial_answers_json ?? null, {}));
+  return modalA(items, prefillAnswers(draft, existing));
 }
 
-/** [↺ Start Over] → wipe the draft (keep the keyword as a convenience) → Modal A. */
+/** [↺ Start Over] → wipe the draft → blank Modal A. */
 export async function signupRestart(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
-  const draft = await loadDraft(c, e.event_id);
-  const keyword = draft?.keyword ?? '';
   await deleteDraft(c, e.event_id);
   const items = await getItems(c.env, e.event_id);
-  return modalA(items, keyword, {});
+  return modalA(items, {});
 }
 
-async function summaryCard(
-  c: HCtx, eventId: number, items: FormItem[], draft: Pick<DraftRow, 'chosen_json' | 'partial_answers_json'>,
-): Promise<Record<string, unknown>> {
-  const chosen = parseJson<AnimeCandidate | null>(draft.chosen_json, null)!;
-  const answers = parseJson<Record<string, string>>(draft.partial_answers_json, {});
+function summaryCard(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
   return {
     content: 'Almost done — confirm your sign-up:',
     embeds: [embed({
-      title: `${chosen.title}${chosen.year ? ` (${chosen.year})` : ''}`,
-      url: chosen.url,
-      description: [
-        chosen.title_en && chosen.title_en !== chosen.title ? chosen.title_en : null,
-        `${chosen.type ?? '?'} · ${chosen.episodes ?? '?'} episodes · [MAL](${chosen.url})`,
-      ].filter(Boolean).join('\n'),
-      thumbnail: chosen.image ?? undefined,
+      title: '📝 Your sign-up',
+      description: `**Your MAL/AniList:** ${answers[LINK_KEY] ?? '—'}\n*Your Secret Santa studies this to pick your anime.*`,
       fields: items.map((it) => ({
         name: `${it.label}${it.visible_to_recommender ? ' 👁' : ' 🔒'}`,
         value: answers[String(it.item_id)] || '—',
       })),
-      footer: '👁 = shown to whoever receives your recommendation',
+      footer: '👁 = shown to your Secret Santa when they pick for you',
     })],
     components: [row(
       btn('ax:signup_confirm', '✅ Confirm Sign-Up', Style.SUCCESS),
@@ -317,10 +265,13 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups closed before you confirmed — sorry!');
   const draft = await loadDraft(c, e.event_id);
-  const chosen = parseJson<AnimeCandidate | null>(draft?.chosen_json ?? null, null);
-  if (!draft || !chosen) {
+  const answers = parseJson<Record<string, string>>(draft?.partial_answers_json ?? null, {});
+  const link = normalizeListUrl(answers[LINK_KEY] ?? '');
+  if (!draft || !link) {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.', embeds: [], components: [] });
   }
+  const itemAnswers = { ...answers };
+  delete itemAnswers[LINK_KEY];
   bg(c, async () => {
     const existing = await getSignup(c.env, e.event_id, c.userId);
     if (!existing) {
@@ -334,21 +285,12 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
       }
     }
     await c.env.DB.prepare(
-      `INSERT INTO signups (event_id, user_id, display_name, mal_id, anime_title, anime_title_en,
-         anime_year, anime_type, anime_episodes, anime_url, anime_image, answers_json, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)
+      `INSERT INTO signups (event_id, user_id, display_name, list_url, answers_json, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
        ON CONFLICT(event_id, user_id) DO UPDATE SET
-         display_name = excluded.display_name, mal_id = excluded.mal_id,
-         anime_title = excluded.anime_title, anime_title_en = excluded.anime_title_en,
-         anime_year = excluded.anime_year, anime_type = excluded.anime_type,
-         anime_episodes = excluded.anime_episodes, anime_url = excluded.anime_url,
-         anime_image = excluded.anime_image, answers_json = excluded.answers_json,
-         updated_at = excluded.updated_at`,
-    ).bind(
-      e.event_id, c.userId, c.displayName, chosen.mal_id, chosen.title, chosen.title_en,
-      chosen.year, chosen.type, chosen.episodes, chosen.url, chosen.image,
-      draft.partial_answers_json ?? '{}', now(),
-    ).run();
+         display_name = excluded.display_name, list_url = excluded.list_url,
+         answers_json = excluded.answers_json, updated_at = excluded.updated_at`,
+    ).bind(e.event_id, c.userId, c.displayName, link, JSON.stringify(itemAnswers), now()).run();
     await deleteDraft(c, e.event_id);
 
     let sheetNote = '';
@@ -362,7 +304,7 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
     }
     await throttledCountRepaint(c, e.event_id);
     await editOriginal(c.env, c.i.token, {
-      content: `🎉 **You're in!** Submitted **${chosen.title}**. You can edit or withdraw until sign-ups close.${sheetNote}`,
+      content: `🎉 **You're in!** Your Secret Santa will pick from your list. You can edit or withdraw until sign-ups close.${sheetNote}`,
       embeds: [], components: [],
     });
   });
@@ -408,18 +350,15 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
   await c.env.DB.prepare('UPDATE signups SET score = ?1, updated_at = ?2 WHERE signup_id = ?3')
     .bind(v, now(), me.signup_id).run();
   bg(c, async () => {
-    const all = await orderedSignups(c.env, e.event_id);
-    const idx = all.findIndex((s) => s.signup_id === me.signup_id);
-    const santa = idx >= 0 ? all[buildLoops(all.map((s) => s.group_no)).santa[idx]!] : undefined;
     if (me.row_order !== null) {
-      // Best-effort sheet cell; the hourly sync self-heals it if this fails.
+      // Best-effort sheet cell; the periodic sync self-heals it if this fails.
       const items = await getItems(c.env, e.event_id);
       await writeScoreCell(c.env, c.guild, e, items, me.row_order, v).catch((err) => {
         console.error('score cell write failed (sync will heal)', err);
       });
     }
     await editOriginal(c.env, c.i.token, {
-      content: `⭐ Saved — you scored **${santa?.anime_title ?? 'your given anime'}** **${v}/10**. You can change it until reviews close.`,
+      content: `⭐ Saved — you scored **${me.reco_title ?? 'your given anime'}** **${v}/10**. You can change it until reviews close.`,
     });
   });
   return respond.deferEphemeral();
@@ -433,7 +372,7 @@ export async function withdraw(c: HCtx): Promise<Response> {
   const existing = await getSignup(c.env, e.event_id, c.userId);
   if (!existing) return respond.ephemeral({ content: 'You are not signed up.' });
   return respond.ephemeral({
-    content: `🚪 Withdraw from **${e.topic}**? Your submission (**${existing.anime_title}**) will be deleted.`,
+    content: `🚪 Withdraw from **${e.topic}**? Your sign-up (list link + answers) will be deleted.`,
     components: [row(btn('ax:withdraw:go', 'Confirm — withdraw', Style.DANGER), btn('ax:cancel', 'Cancel'))],
   });
 }

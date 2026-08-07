@@ -1,17 +1,21 @@
 # Anime Exchange Bot — User Manual
 
-A secret-santa-style anime exchange for your Discord server. Everyone submits
-one anime recommendation, receives someone else's pick at random, watches the
-full season, writes a review in a Google Doc, and scores it out of 10. Who
-recommended what stays secret until the reveal at the end.
+A secret-santa-style anime exchange for your Discord server — where the gifts
+are **hand-picked recommendations**. You sign up with a link to your
+MAL/AniList; the bot secretly matches everyone in loops. You study *your*
+person's list and recommend an anime just for them, while your own Secret
+Santa picks one for you. Don't like the pick? Send it back with **Sorry😞**
+(a limited number of times!). Once every pick is locked in, everyone watches
+their full season, writes a review in a Google Doc, and scores it out of 10.
+Who picked what for whom stays secret until the reveal at the end.
 
-Assignments form **loops**: by default one big circle over everyone, or several
+Matches form **loops**: by default one big circle over everyone, or several
 smaller circles if the manager splits participants into groups. Inside a loop,
-you watch the pick of the person "after" you, and the person "before" you
-watches yours.
+the person *after* you picks **for you**, and *you* pick for the person
+*before* you.
 
-Everything happens through **buttons on two pinned messages** — nobody types
-commands except the one-time `/setup`.
+Everything happens through **buttons on two pinned messages** and your private
+thread — nobody types commands except the one-time `/setup`.
 
 ---
 
@@ -23,12 +27,13 @@ commands except the one-time `/setup`.
 | `#anime-exchange` | Everyone | The sign-up panel, the reveal gallery, and each participant's **private thread** |
 
 Both channels are read-only; you interact by clicking buttons. Private threads
-under `#anime-exchange` are where each participant receives their assignment,
-reminders, and reveal.
+under `#anime-exchange` are where each participant receives their Santa
+mission, their pick, reminders, and the reveal.
 
 > **Privacy note:** members with the *Manage Threads* permission (admins/mods)
-> can technically open private threads. Assignments are hidden from ordinary
-> members, not from moderators.
+> can technically open private threads. Missions and picks are hidden from
+> ordinary members, not from moderators. (Buttons still refuse them — each
+> card's buttons only work for their owner.)
 
 ---
 
@@ -37,57 +42,84 @@ reminders, and reveal.
 ### Signing up
 
 1. Press **📝 Sign Up** on the pinned panel while sign-ups are open.
-2. **Step 1 modal:** type an anime title keyword — English and Japanese both
-   work ("frieren", "Sousou no Frieren", and 「葬送のフリーレン」 all find the
-   same show) — and answer the first few of the manager's questions.
-3. Pick your anime from the search results (year, format and episode count are
-   shown so you can pick the right season). **🔍 Search again** reopens the
-   form with your answers kept.
-4. If the form has more than four questions, a **Continue (2/2)** step shows
-   the rest.
-5. Review the **summary card** and press **✅ Confirm Sign-Up**.
+2. Fill in the built-in **"Link of your MAL/AniList"** field — e.g.
+   `https://myanimelist.net/profile/you`, `https://myanimelist.net/animelist/you`
+   or `https://anilist.co/user/you`. This is what your Secret Santa studies to
+   pick your anime, so a public, up-to-date list gets you better gifts. Answer
+   the manager's questions (a second step appears if there are more than four).
+3. Review the **summary card** and press **✅ Confirm Sign-Up**.
 
-Until sign-ups close you can press **✏ Edit My Sign-Up** (same wizard,
+Until sign-ups close you can press **✏ Edit My Sign-Up** (same form,
 pre-filled) or **🚪 Withdraw**. If you wander off mid-wizard, your progress is
 kept for 30 minutes.
 
-Some questions are marked **👁 visible to your recommender** — the person whose
-pick you receive will see those answers (helps them know who they're gifting
-to). **🔒 hidden** answers are only on the manager's sheet.
+Some questions are marked **👁 visible to your recommender** — your Secret
+Santa sees those answers next to your list when picking for you. **🔒 hidden**
+answers are only on the manager's sheet.
 
-### Your private thread
+### Your mission 🎯
 
-When the manager launches the event, a private thread named `🎁 {your name}`
-appears with your **assignment card**:
+When the manager starts the recommendation phase, a private thread named
+`🎁 {your name}` appears with your **mission card**:
 
-- **Your anime** — title, year, episodes, cover, MAL link. Watch the full
-  season. *Who recommended it stays secret until the reveal.*
+> 🎯 You are the Secret Santa of **rabbit** — here's their list
+> (`📚 Open their list`) and what they shared. They can send a pick back
+> **2** times. They don't know it's you. 🤫
+
+Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
+both work — "frieren", "Sousou no Frieren" and 「葬送のフリーレン」 all find
+the same show), pick the right season from the results, and **📨 Send** it.
+
+- If they decline, you get a ping with how many declines they have left — and
+  which titles they've already sent back (you can't re-pick those).
+- When they approve (or their declines run out), you get a 🎉 ping — mission
+  complete.
+
+### Your pick 🎁
+
+When *your* Secret Santa sends a pick, your thread gets a card with the anime
+(cover, year, episodes, MAL link) and two buttons:
+
+- **Thank you!😊** — locks it in. That's your anime for the event.
+- **Sorry😞** — sends it back. Your Santa picks again. You can only do this
+  as many times as the manager allowed (shown on the card); after your last
+  decline, **the next pick locks in automatically**.
+
+Lost a thread? Press **🎯 My Status** on the pinned panel — it shows both your
+mission and your pick, with the same buttons.
+
+### The event itself
+
+Once every pick in the event is locked in, the manager launches. Your thread
+gets the **assignment card**:
+
+- **Your anime** — the locked-in pick. Watch the full season. *Who picked it
+  stays secret until the reveal.*
 - **📝 Open your review doc** — your personal Google Doc. Write your review
   there any time before the deadline. The link lives on this card permanently.
-- **⭐ Score it /10** — rate your given anime (1–10). You can change your
-  score any time until reviews close.
-- **Your recommendation** — who received it, plus their 👁-visible answers.
+- **⭐ Score it /10** — rate your given anime (1–10), changeable until reviews
+  close.
+- **Your pick** — a recap of what you chose for your person.
 
 Reminders arrive in this thread as the deadline approaches (and optionally by
-DM, if the manager enabled mirroring). The wording differs depending on
-whether you've started writing yet — you count as "started" once your doc has
-about 20 characters beyond the pre-filled template.
+DM, if the manager enabled mirroring). You count as "started" once your doc
+has about 20 characters beyond the pre-filled template.
 
 ### The reveal
 
 When the manager closes reviews, every doc flips to **view-only first**, then
 your thread gets the reveal card:
 
-> Your Secret Santa was **J** (@J) — they recommended **Sousou no Frieren** for you.
+> Your Secret Santa was **J** (@J) — they picked **Sousou no Frieren** for you.
 >
-> **rabbit** (@rabbit) gave your recommendation **Kaijuu 8-gou** **⭐ 8 stars**:
+> **rabbit** (@rabbit) gave your pick **Kaijuu 8-gou** **⭐ 8 stars**:
 > `[📖 Review of Kaijuu 8-gou by rabbit]`
 
 If the manager chose a public gallery, `#anime-exchange` also gets the whole
-loop, one section per group:
+loop, one line per participant:
 
-> 🎁 **J** (@J) recommended **Kaijuu 8-gou** → received **⭐ 7 stars** from
-> **rabbit** (@rabbit) ([read review](…))
+> 🎁 **J** (@J) picked **Kaijuu 8-gou** for **rabbit** (@rabbit) — **⭐ 8
+> stars** ([read review](…))
 
 ---
 
@@ -110,25 +142,25 @@ loop, one section per group:
 
 **DRAFTING — build the sign-up form**
 - **⚙ Set Basics** — topic, sign-up deadline (`YYYY-MM-DD HH:mm`), timezone
-  (IANA, pre-filled `America/Chicago`), and whether sign-ups auto-stop at the
-  deadline.
+  (IANA, pre-filled `America/Chicago`), auto-stop on/off, and the
+  **Sorry😞 budget (0–9)**: how many times each participant may decline a
+  pick. `0` means first pick = final; `1`–`2` is the sweet spot for most
+  groups.
 - **➕ Add Item / 🛠 Edit Items** — up to 9 custom questions, fill-in or
-  multiple-choice (2–10 options), each visible-to-recommender or hidden.
-  Reorder or delete from the item card.
+  multiple-choice (2–10 options), each visible-to-recommender or hidden. The
+  **MAL/AniList link is built-in** and always first — you don't add it.
 - **📨 Open Sign-Ups** — requires basics + Google connected. Creates the
   spreadsheet and opens the participant panel.
 - **🗑 Discard** deletes the draft.
 
 **SIGNUP_OPEN**
 - **📋 View Sign-Ups** — count, five most recent names, sheet link.
-- The panel's live count updates instantly when things are quiet, and at most
-  once per minute during a burst. Participants never see the count.
 - If the deadline passes with auto-stop off, the participant panel shows
   "⏰ Deadline passed — still accepting until the manager closes sign-ups."
 - **⏸ Stop Sign-Ups** moves to Matching (reversible via Reopen).
 
 **MATCHING — arrange the loops.** The flow is **Grouping → Shuffle →
-hand-tune → Validate**:
+hand-tune → Validate → Start Recommending**:
 
 1. **🧩 Grouping** — split everyone into G random loops of near-equal size
    (G up to half the participant count; G = 1 is one big loop). Re-roll freely.
@@ -136,28 +168,52 @@ hand-tune → Validate**:
    is in which loop.
 3. **Hand-tune in the sheet** (optional) — two levers: **reorder rows** to
    change a loop's order, and **edit the Group column** to move someone
-   between loops. Your santa is simply the next row within your group's block.
-   The Secret Santa / Given Anime columns are always derived — never type in
-   them.
+   between loops. Each row's Secret Santa is the next row within its group's
+   block — that person will pick *for* this row. The derived columns are never
+   read back.
 4. **✅ Validate** — reconciles the sheet with the bot: checks for edited
    IDs, duplicates, and removed rows (with a removal/restore flow), parses the
    Group column (blank = 1), **blocks** any 1-person group, **warns** on
-   2-person groups (a mutual pair — fine if intended), then re-sorts rows into
-   clean blocks.
-5. **🚀 Launch** — set the review deadline, timezone, reminder days
-   (default `7,3,1`), and optional DM mirroring; confirm. Validation runs
-   again automatically.
+   2-person groups (a mutual pair — you pick for each other; fine if
+   intended), then re-sorts rows into clean blocks.
+5. **🎯 Start Recommending** — validates once more, then **locks the
+   assignment**. From here the sheet's row order and Group column are a
+   dashboard, not an input.
 
-**LAUNCHING** — the bot creates one review doc + one private thread per
-participant, about 5 per minute; the panel counts up and flips to RUNNING by
-itself. Redeploys or crashes lose nothing — it resumes where it left off.
+**PREPARING** — the bot creates one private thread per participant and posts
+their Santa mission card (who they pick for + that person's list link +
+👁-visible answers), about 5 per minute; the panel counts up and flips to
+RECOMMENDING by itself.
+
+**RECOMMENDING — the heart of v3.** The panel shows
+`locked / awaiting reply / waiting on their Santa` counts live.
+
+- **📊 View Status** — one line per participant: what they were picked,
+  whether it's ✅ approved / 🔒 auto-locked / ⏩ manager-locked / ⏳ awaiting
+  reply / 🎁 still waiting (with decline counts).
+- **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
+  haven't picked (or got declined and haven't re-picked), and giftees sitting
+  on a pending pick. The nudge lands in their thread with the right buttons.
+- **⏩ Force-finalize** — locks every ⏳ *pending* pick on the giftee's behalf
+  (for giftees who never reply). It cannot conjure picks that were never sent.
+- **↩ Back to Matching** — the undo: wipes **all** picks, approvals and
+  declines, and unlocks the assignment for regrouping. Threads stay and are
+  reused; old thread cards become stale (their buttons politely refuse).
+- **🚀 Launch** — set the review deadline, timezone, reminder days
+  (default `7,3,1`), and optional DM mirroring; confirm. Launch **refuses
+  until every pick is locked in** — the panel tells you what's missing.
+
+**LAUNCHING** — the bot creates one review doc per participant (for their
+locked-in anime) and posts the assignment card in their existing thread,
+about 5 per minute; the panel counts up and flips to RUNNING by itself.
+Redeploys or crashes lose nothing — it resumes where it left off.
 
 **RUNNING**
 - **📊 View Event** — per-participant status (`✍ 2,431 chars · ⭐ 8/10` /
   `❌ not started`). **Each click also queues a status refresh** — click,
   wait a minute, click again for fresh numbers. Status also refreshes on its
   own every 30 minutes.
-- **📣 Remind Now** — immediate nudge to everyone who hasn't started.
+- **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
 - **🏁 Close Reviews** — choose **Close & post gallery** (public reveal in
   `#anime-exchange`) or **Close quietly** (reveals only in private threads).
 
@@ -170,9 +226,9 @@ data, and resets both panels. **Your Google Sheet and Docs stay in your
 Drive.** A new event can start immediately.
 
 **🛑 Abort** — available in every state as the red escape hatch. It cancels
-any stuck launch/close/sync, removes threads, wipes the bot's event data, and
-resets the panels — Drive files are never touched. Use it whenever an event is
-wedged; it cannot be undone.
+any stuck job, removes threads, wipes the bot's event data, and resets the
+panels — Drive files are never touched. Use it whenever an event is wedged; it
+cannot be undone.
 
 ### The spreadsheet
 
@@ -183,16 +239,20 @@ automatically if it drifts.
 |---|---|---|
 | Row # | bot | display only |
 | User ID 🔑 | bot | immutable key — **never edit** |
-| Username, Anime, MAL | bot | the signup |
+| Username | bot | the participant |
+| MAL/AniList | bot | their list link (the built-in signup item) |
 | *your custom items* | bot | answers (🔒 marks hidden ones) |
-| **Group** | **you** (during Matching) | loop membership — positive integer, blank = 1 |
-| Secret Santa / Given Anime | bot | derived from row order — never edit |
+| **Group** | **you** (during Matching only) | loop membership — positive integer, blank = 1 |
+| Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
+| Recommendation | bot | the anime this row's Santa picked for them (live during Recommending) |
+| Rec. Status | bot | `⏳ awaiting reply` / `😞 declined ×k` / `✅ approved` / `🔒 locked (declines used up)` / `⏩ finalized by manager` |
 | Review Link | bot | each participant's doc |
 | Review Length | bot | characters written beyond the template |
 | Score | bot | the participant's ⭐/10 for their given anime |
 
-**Row order and the Group column are the only inputs.** Everything else you
-type in the derived block gets overwritten.
+**Row order and the Group column are the only inputs, and only while the
+event is in Matching.** Once recommendations start, the assignment is locked
+and the whole sheet is a dashboard.
 
 ---
 
@@ -201,7 +261,10 @@ type in the derived block gets overwritten.
 | Thing | How fast |
 |---|---|
 | Sign-up count on the manager panel | instant when quiet; ≤ ~1–2 min during a burst |
-| Assignments delivered at Launch | ~5 participants per minute |
+| Threads + Santa missions at Start Recommending | ~5 participants per minute |
+| Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
+| Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
+| Review docs + assignment cards at Launch | ~5 participants per minute |
 | Review Length / started-writing / Score in sheet & panel | every 30 min, plus on every **View Event** click |
 | Reminders | up to 30 messages per minute |
 | Close (flips + reveals) | ~5 participants per minute, docs flip first |
@@ -214,6 +277,31 @@ minutes and the panels show live progress.
 ---
 
 ## FAQ & troubleshooting
+
+**What link can I use at sign-up?**
+Any `myanimelist.net` or `anilist.co` URL that isn't just the bare domain —
+your profile (`/profile/you`, `/user/you`) or your list (`/animelist/you`).
+The scheme is optional; the bot normalizes it. Other sites are rejected.
+
+**I used up my Sorry😞s. Can I still decline?**
+No — that's the deal. After your last decline, the next pick locks in
+automatically. Choose your declines wisely.
+
+**My giftee declined everything and now won't respond.**
+They can't decline forever (the budget), and if a pick is stuck **⏳ awaiting
+reply**, the manager's **⏩ Force-finalize** locks it. If your pick was
+declined and *you're* stuck, just recommend again — declined titles are shown
+so you don't repeat them.
+
+**A Santa never sends a pick.**
+The manager can 📣 Remind them (the nudge has the Recommend button in it). If
+they're truly gone, the manager can **↩ Back to Matching**, remove them via
+Validate's removal flow, regroup, and start recommending again.
+
+**I clicked a button in a thread and it said the buttons belong to someone
+else.**
+Cards only obey their owner. Find your own thread, or use **🎯 My Status** on
+the pinned panel.
 
 **Search says "Try a different keyword — or try again in a minute."**
 All search sources failed for that query. Very short keywords (under 3
@@ -235,7 +323,8 @@ Status updates every 30 minutes; click **View Event** twice (a minute apart)
 to force it. "Started" means ~20+ characters beyond the doc template.
 
 **A participant left the server mid-event.**
-Their row, doc, and assignment stay — the loop is unaffected, and their review
+Their row stays and the loop is unaffected. If it happens before their pick
+was locked, see "A Santa never sends a pick" above; after Launch, their doc
 still counts at the reveal.
 
 **Someone deleted their review doc.**
