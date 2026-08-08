@@ -78,7 +78,7 @@ function modalA(items: FormItem[], answers: Record<string, string>): Response {
     modalText(LINK_KEY, 'Link of your MAL/AniList', {
       value: answers[LINK_KEY] ?? '', max: 300,
       placeholder: 'https://myanimelist.net/profile/you — or anilist.co/user/you',
-      description: 'Your Secret Santa studies this list to pick your anime',
+      description: 'N/A if you don\'t have one, but strongly recommended as your Secret Santa studies this list to pick your anime',
     }),
     ...itemsA(items).map((it) => itemComponent(it, answers)),
   ]);
