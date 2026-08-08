@@ -159,10 +159,13 @@ loop, one line per participant:
   pick. `0` means first pick = final; `1`–`2` is the sweet spot for most
   groups.
 - **➕ Add Item / 🛠 Edit Items** — up to 9 custom questions, fill-in or
-  multiple-choice (2–10 options), each visible-to-recommender or hidden. The
-  **MAL/AniList link is built-in** and always first — you don't add it.
+  multiple-choice (2–10 options), each with an optional **description**
+  (helper text shown under the question on the sign-up form) and each
+  visible-to-recommender or hidden. The **MAL/AniList link is built-in** and
+  always first — you don't add it.
 - **📨 Open Sign-Ups** — requires basics + Google connected. Creates the
-  spreadsheet and opens the participant panel.
+  spreadsheet, opens the participant panel, and **pings @everyone** in
+  `#anime-exchange` that sign-ups are open.
 - **🗑 Discard** deletes the draft.
 
 **SIGNUP_OPEN**

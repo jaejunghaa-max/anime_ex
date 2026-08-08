@@ -65,12 +65,13 @@ const itemsB = (items: FormItem[]) => items.slice(4, 9);
 
 function itemComponent(it: FormItem, answers: Record<string, string>): Record<string, unknown> {
   const prev = answers[String(it.item_id)];
+  const description = it.description ?? undefined;
   if (it.type === 'MCQ') {
     return modalSelect(`item:${it.item_id}`, it.label, optionsOf(it).map((o, idx) => ({
       label: o, value: String(idx), default: prev === o,
-    })));
+    })), { description });
   }
-  return modalText(`item:${it.item_id}`, it.label, { paragraph: true, value: prev ?? '', max: 500 });
+  return modalText(`item:${it.item_id}`, it.label, { paragraph: true, value: prev ?? '', max: 500, description });
 }
 
 function modalA(items: FormItem[], answers: Record<string, string>): Response {

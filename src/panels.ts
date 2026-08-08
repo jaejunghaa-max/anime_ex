@@ -98,9 +98,9 @@ const abortBtn = () => btn('ax:abort', '🛑 Abort', Style.DANGER);
 
 const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google' : '🔗 Connect Google');
 
-/** The sheet travels in the panel body on every state that has one — the
- *  panels carry no View Sheet buttons. */
-const sheetLine = (e: EventRow): string => (e.sheet_id ? `\nSheet: ${sheetUrl(e.sheet_id)}` : '');
+/** The sheet travels in the panel body on every state that has one — bold,
+ *  first line of the manager embed; the panels carry no View Sheet buttons. */
+const sheetTop = (e: EventRow): string => (e.sheet_id ? `**📝 Sheet:** ${sheetUrl(e.sheet_id)}\n` : '');
 
 export interface ItemSummary { label: string; type: 'FIB' | 'MCQ'; optionCount: number; visible: boolean }
 
@@ -169,9 +169,10 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `📨 Sign-ups open — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**Deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})` +
             `${e.auto_stop ? ' · auto-stop **on**' : ''}\n` +
-            `**${stats.count}** signed up\n${googleLine(guild)}${sheetLine(e)}`,
+            `**${stats.count}** signed up\n${googleLine(guild)}`,
         })],
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
@@ -190,8 +191,9 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🔀 Matching — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}${sheetLine(e)}`,
+            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
         })],
         components: [
           row(
@@ -211,8 +213,9 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎯 Preparing — ${e.topic}`,
           description:
+            sheetTop(e) +
             `Creating private threads and delivering Santa missions… **${stats.prepared} / ${stats.count}** · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
       };
@@ -230,10 +233,11 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎯 Recommending — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**${stats.recoFinal} / ${stats.count}** picks accepted · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
             `Each person may send a pick back **${e.max_declines}** time(s) — and accepted picks stay changeable until Launch.\n` +
             statusLine +
-            `\n${googleLine(guild)}${sheetLine(e)}` + stallLine(stats.activeJob) + abortingLine(stats),
+            `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [
           row(
@@ -256,8 +260,9 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🚀 Launching — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**${stats.launched} / ${stats.count}** review docs + assignment cards delivered · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
       };
@@ -269,8 +274,9 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎬 Running — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
-            `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}${sheetLine(e)}` +
+            `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(
@@ -288,9 +294,10 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🏁 Closing — ${e.topic}`,
           description:
+            sheetTop(e) +
             `Flipping docs read-only and posting reveals… **${done} / ${stats.count}**\n` +
             `(read-only: ${stats.flipped}/${stats.count} · reveals: ${stats.revealed}/${stats.count})` +
-            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
+            stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
       };
@@ -304,8 +311,9 @@ export function renderManagerPanel(
         embeds: [embed({
           title: `🎉 Revealed — ${e.topic}`,
           description:
+            sheetTop(e) +
             `**${stats.count}** participants · ${loopsPhrase(stats.groupSizes)} · review deadline was ${ts(e.review_deadline!)}\n` +
-            `Docs are view-only; reveals are posted in participant threads.${sheetLine(e)}` + finishing,
+            `Docs are view-only; reveals are posted in participant threads.` + finishing,
         })],
         components: [row(btn('ax:finish', '🧹 Finish', Style.PRIMARY), abortBtn())],
       };

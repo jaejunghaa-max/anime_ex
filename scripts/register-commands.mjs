@@ -36,8 +36,8 @@ console.log('✅ Registered /setup (init, repair).');
 
 // Bot install permissions (spec §3.1): Manage Roles, Manage Channels, Manage
 // Threads, Create Private Threads, Send Messages (+in Threads), Embed Links,
-// Read Message History, Manage Messages.
-const bits = [28n, 4n, 34n, 36n, 11n, 38n, 14n, 16n, 13n]
+// Read Message History, Manage Messages, Mention Everyone (sign-up-open ping).
+const bits = [28n, 4n, 34n, 36n, 11n, 38n, 14n, 16n, 13n, 17n]
   .reduce((acc, b) => acc | (1n << b), 0n);
 console.log('\nInvite the bot with:');
 console.log(`https://discord.com/oauth2/authorize?client_id=${appId}&scope=bot%20applications.commands&permissions=${bits}`);

@@ -6,7 +6,7 @@
 import type { EventRow, FormItem } from '../types';
 import { modalFields } from '../types';
 import {
-  btn, editOriginal, embed, linkBtn, modalSelect, modalText, respond, row, stringSelect, Style,
+  btn, editOriginal, embed, linkBtn, modalSelect, modalText, postMessage, respond, row, stringSelect, Style,
 } from '../discord';
 import { getItems, countSignups, dbBatchChunked, loopContext, optionsOf, orderedSignups, transition } from '../db';
 import { repostPanels } from '../panels';
@@ -152,6 +152,11 @@ function itemModal(customId: string, item?: FormItem): Response {
       { label: 'Fill-in (free text)', value: 'FIB', default: (item?.type ?? 'FIB') === 'FIB' },
       { label: 'Multiple choice (2–10 options)', value: 'MCQ', default: item?.type === 'MCQ' },
     ]),
+    modalText('desc', 'Description (optional)', {
+      required: false, value: item?.description ?? '', max: 100,
+      placeholder: 'e.g. Pick the genre you watch the most',
+      description: 'Shown under the question on the sign-up form',
+    }),
     modalText('options', 'MCQ options — one per line', {
       required: false, paragraph: true, value: opts.join('\n'), max: 1000,
       description: 'Only used for multiple choice',
@@ -188,6 +193,7 @@ export async function itemSubmit(c: HCtx, arg: string): Promise<Response> {
   const f = modalFields(c.i.data?.components);
   const label = (f.get('label') ?? '').trim();
   const type = f.get('type') === 'MCQ' ? 'MCQ' : 'FIB';
+  const description = (f.get('desc') ?? '').trim().slice(0, 100) || null;
   const visibility = f.get('visibility') === '1' ? 1 : 0;
   const optionLines = (f.get('options') ?? '').split('\n').map((s) => s.trim()).filter(Boolean);
   if (!label) return respond.ephemeral({ content: '⚠ The label cannot be empty.' });
@@ -200,12 +206,12 @@ export async function itemSubmit(c: HCtx, arg: string): Promise<Response> {
     const items = await getItems(c.env, e.event_id);
     if (items.length >= MAX_ITEMS) return respond.ephemeral({ content: `⚠ Custom item cap is ${MAX_ITEMS}.` });
     await c.env.DB.prepare(
-      'INSERT INTO form_items (event_id, position, label, type, options_json, visible_to_recommender) VALUES (?1, ?2, ?3, ?4, ?5, ?6)',
-    ).bind(e.event_id, items.length + 1, label, type, optionsJson, visibility).run();
+      'INSERT INTO form_items (event_id, position, label, type, description, options_json, visible_to_recommender) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)',
+    ).bind(e.event_id, items.length + 1, label, type, description, optionsJson, visibility).run();
   } else {
     const res = await c.env.DB.prepare(
-      'UPDATE form_items SET label = ?1, type = ?2, options_json = ?3, visible_to_recommender = ?4 WHERE item_id = ?5 AND event_id = ?6',
-    ).bind(label, type, optionsJson, visibility, Number(arg), e.event_id).run();
+      'UPDATE form_items SET label = ?1, type = ?2, description = ?3, options_json = ?4, visible_to_recommender = ?5 WHERE item_id = ?6 AND event_id = ?7',
+    ).bind(label, type, description, optionsJson, visibility, Number(arg), e.event_id).run();
     if ((res.meta.changes ?? 0) === 0) return stale(c, 'That item no longer exists.');
   }
   bg(c, async () => {
@@ -225,6 +231,7 @@ function itemCard(item: FormItem, position: number, total: number): Record<strin
       title: `Item ${position}/${total}: ${item.label}`,
       description:
         `**Type:** ${item.type === 'MCQ' ? 'multiple choice' : 'fill-in'}\n` +
+        (item.description ? `**Description:** ${item.description}\n` : '') +
         (item.type === 'MCQ' ? `**Options:**\n${opts.map((o) => `• ${o}`).join('\n')}\n` : '') +
         `**Visibility:** ${item.visible_to_recommender ? '👁 visible to your recommender' : '🔒 hidden'}`,
     })],
@@ -339,6 +346,18 @@ export async function openSignupsGo(c: HCtx): Promise<Response> {
       return;
     }
     await repaint(c);
+    // Announce in the participant channel with a real @everyone ping (the
+    // invite grants Mention Everyone; without it the text still shows, it
+    // just doesn't notify).
+    if (c.guild.participant_channel_id) {
+      await postMessage(c.env, c.guild.participant_channel_id, {
+        content:
+          `@everyone 📨 **${e.topic}** — sign-ups are open! ` +
+          `Press **📝 Sign Up/Edit** on the pinned panel. ` +
+          `Deadline: ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})`,
+        allowed_mentions: { parse: ['everyone'] },
+      }).catch((err) => console.error('sign-up-open announcement failed', err));
+    }
     await editOriginal(c.env, c.i.token, {
       content: `📨 **Sign-ups are open!** Sheet: ${sheetUrl(sheetId!)}`, components: [],
     });

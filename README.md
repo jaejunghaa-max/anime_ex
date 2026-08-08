@@ -138,7 +138,10 @@ npm run deploy
 1. `DISCORD_TOKEN=... DISCORD_APP_ID=... npm run register` — registers
    `/setup init` + `/setup repair` and prints the **invite URL** (Manage Roles,
    Manage Channels, Manage Threads, Create Private Threads, Send Messages
-   (+ in Threads), Embed Links, Read Message History, Manage Messages).
+   (+ in Threads), Embed Links, Read Message History, Manage Messages,
+   Mention Everyone — the Open-Sign-Ups @everyone ping). On an install that
+   predates the Mention Everyone permission, re-invite with the new URL (or
+   grant the bot's role "Mention @everyone") so the ping actually notifies.
 2. In the app's **General Information**, set **Interactions Endpoint URL** to
    `https://<worker>/interactions` (Discord sends a PING — the deployed Worker
    must be live first).
@@ -155,8 +158,10 @@ Everything happens on the two pinned panels:
 1. **Connect Google** (manager panel) → **New Event** → **Set Basics** (topic,
    sign-up deadline, timezone, auto-stop, and the **Sorry😞 budget** — how many
    times each person may decline a pick, 0–9) → add up to 9 custom form items
-   (fill-in or MCQ, each 👁 visible-to-recommender or 🔒 hidden) →
-   **Open Sign-Ups** (creates the spreadsheet in the manager's Drive).
+   (fill-in or MCQ, optional description shown under the question, each 👁
+   visible-to-recommender or 🔒 hidden) → **Open Sign-Ups** (creates the
+   spreadsheet in the manager's Drive and pings **@everyone** in the
+   participant channel).
 2. Participants press **Sign Up/Edit** (one button for both): the built-in
    **MAL/AniList link** field + items 1–4, an optional second modal for items
    5–9, then a summary card to confirm. Re-press to edit, or withdraw, any

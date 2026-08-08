@@ -265,14 +265,17 @@ const sum = (...bits: bigint[]) => bits.reduce((a, b) => a | b, 0n).toString();
 export function managerChannelOverwrites(guildId: string, managerRoleId: string, botId: string): Overwrite[] {
   return [
     {
-      // @everyone: invisible AND explicitly unwritable — nobody chats here.
+      // @everyone: invisible AND explicitly unwritable — no messages, no
+      // thread activity, nothing.
       id: guildId, type: 0, allow: '0',
-      deny: sum(P.VIEW_CHANNEL, P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS, P.ADD_REACTIONS),
+      deny: sum(P.VIEW_CHANNEL, P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS,
+        P.CREATE_PUBLIC_THREADS, P.CREATE_PRIVATE_THREADS, P.ADD_REACTIONS),
     },
     {
       id: managerRoleId, type: 0,
       allow: sum(P.VIEW_CHANNEL, P.READ_MESSAGE_HISTORY),
-      deny: sum(P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS, P.ADD_REACTIONS),
+      deny: sum(P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS,
+        P.CREATE_PUBLIC_THREADS, P.CREATE_PRIVATE_THREADS, P.ADD_REACTIONS),
     },
     {
       id: botId, type: 1,

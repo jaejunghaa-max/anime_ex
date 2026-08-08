@@ -80,8 +80,9 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
   return {
     content: `<@${giftee.user_id}> your Secret Santa picked something for you! 🎁`,
     embeds: [embed({
+      // No title url — like the assignment card, the title stays unclickable;
+      // the [MAL] link lives in the body text.
       title: `🎁 ${giftee.reco_title}${giftee.reco_year ? ` (${giftee.reco_year})` : ''}`,
-      url: giftee.reco_url ?? undefined,
       description:
         `${animeLine(giftee)}\n` +
         `Chosen just for you — *who picked it stays secret until the reveal.*\n\n${choiceLine}`,

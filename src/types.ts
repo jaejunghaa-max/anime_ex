@@ -90,6 +90,8 @@ export interface FormItem {
   position: number;
   label: string;
   type: 'FIB' | 'MCQ';
+  /** Optional helper text shown under the question in the sign-up modal. */
+  description: string | null;
   options_json: string | null;
   visible_to_recommender: number;
 }

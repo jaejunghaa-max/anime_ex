@@ -13,7 +13,7 @@ import { verifyDiscordSignature } from './util';
 
 // Bumped on releases; shown on the health route so "is the new code live?"
 // is answerable from a browser.
-const BUILD = '3.2.0-streamline';
+const BUILD = '3.3.0-polish';
 
 export default {
   async fetch(req: Request, env: Env, ec: ExecutionContext): Promise<Response> {
