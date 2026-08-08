@@ -125,9 +125,10 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'finish': return arg === 'go' ? mgr.finishGo(c) : mgr.finish(c);
     // any non-IDLE state (manager)
     case 'abort': return arg === 'go' ? mgr.abortGo(c) : mgr.abort(c);
-    // participant wizard
-    case 'signup': return su.signupStart(c, false);
-    case 'edit_signup': return su.signupStart(c, true);
+    // participant wizard ('edit_signup' = pre-3.2 panels; same flow now)
+    case 'signup':
+    case 'edit_signup':
+      return su.signupStart(c);
     case 'signup_cont': return su.signupContinue(c);
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);

@@ -44,12 +44,13 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 - **Recommending** (new): the Santa picks via the MAL search wizard (EN/JP
   re-ranking, same engine as v2's signup search). The giftee's thread gets the
   pick with **[Thank you!😊]** / **[Sorry😞]**. Accepting is reversible — a red
-  **[No. I'll decline it.😞]** stays on the card until Launch. Declining
-  (before or after accepting) spends the per-person budget (**0–9, set in Set
-  Basics at drafting**); a declined title can't be re-picked, and a spent
-  budget just removes the decline buttons — nothing locks mid-phase. Manager
-  tools: 📊 View Status, 📣 Remind Now, ↩ Back to Matching (wipes picks,
-  keeps threads).
+  **[I changed my mind to decline it😞]** stays on the card until Launch.
+  Declining (before or after accepting) spends the per-person budget (**0–9,
+  set in Set Basics at drafting**); a declined title can't be re-picked, a
+  spent budget just removes the decline buttons — nothing locks mid-phase —
+  and the Santa never sees the remaining count. Manager tools: 🔄 Refresh,
+  📣 Remind Now, ↩ Back to Matching (wipes picks, keeps threads); the per-pair
+  detail lives in the sheet, linked in every panel body.
 - **Launch onward**: identical to v2, except Launch refuses only while a Santa
   hasn't sent a pick, locks any still-pending picks itself (after a bold
   **‼️The pending picks will be locked** warning), creates review docs for the
@@ -156,9 +157,10 @@ Everything happens on the two pinned panels:
    times each person may decline a pick, 0–9) → add up to 9 custom form items
    (fill-in or MCQ, each 👁 visible-to-recommender or 🔒 hidden) →
    **Open Sign-Ups** (creates the spreadsheet in the manager's Drive).
-2. Participants press **Sign Up**: the built-in **MAL/AniList link** field +
-   items 1–4, an optional second modal for items 5–9, then a summary card to
-   confirm. Edit/withdraw any time while sign-ups are open.
+2. Participants press **Sign Up/Edit** (one button for both): the built-in
+   **MAL/AniList link** field + items 1–4, an optional second modal for items
+   5–9, then a summary card to confirm. Re-press to edit, or withdraw, any
+   time while sign-ups are open.
 3. **Stop Sign-Ups** → arrange the loops → **Validate** → **🎯 Start
    Recommending**. The matching tools are unchanged from v2:
    - **🧩 Grouping** (step 1) splits everyone into G random loops of
@@ -179,16 +181,16 @@ Everything happens on the two pinned panels:
      and runs the batched prepare job: one private thread + Santa mission card
      per participant (~`JOB_BATCH`/min).
 4. **RECOMMENDING**: Santas pick via the MAL wizard; giftees accept
-   (**Thank you!😊** — reversible via the red **No. I'll decline it.😞** until
-   Launch) or decline (**Sorry😞**, at most the drafted budget; declined
-   titles can't be re-picked; a spent budget removes the decline buttons).
-   The sheet's **Recommendation / Rec. Status** columns update live; the panel
-   shows `accepted / pending / waiting` counts. Manager levers: **📣 Remind
-   Now** (nudges Santas who owe a pick + giftees who owe a reply) and
-   **↩ Back to Matching** (wipes all picks; threads are reused later).
-   **🚀 Launch** refuses only while some Santa hasn't sent a pick; ⏳ pending
-   picks are locked by the launch itself after a bold
-   **‼️The pending picks will be locked** warning.
+   (**Thank you!😊** — reversible via the red **I changed my mind to decline
+   it😞** until Launch) or decline (**Sorry😞**, at most the drafted budget;
+   declined titles can't be re-picked; a spent budget removes the decline
+   buttons). The sheet's **Recommendation / Rec. Status** columns update live;
+   the panel shows `accepted / pending / waiting` counts, refreshable on the
+   spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
+   who owe a pick + giftees who owe a reply) and **↩ Back to Matching** (wipes
+   all picks; threads are reused later). **🚀 Launch** refuses only while some
+   Santa hasn't sent a pick; ⏳ pending picks are locked by the launch itself
+   after a bold **‼️The pending picks will be locked** warning.
 5. Launch runs as a batched job: per participant a review doc for their final
    anime (`Review of {Anime} by {name}`, header "given to
    `Display(@username)`", anyone-with-link **editor**), and an assignment card
@@ -205,8 +207,9 @@ Everything happens on the two pinned panels:
    cards — "your Secret Santa was X, they picked Y for you"; unscored reviews
    read "didn't score your pick" — plus the public gallery (always posted),
    one line per participant, per loop.
-8. **Finish**: deletes threads and the bot's event data. **The sheet and docs
-   stay in the manager's Drive** — nothing to export.
+8. **Finish**: deletes threads and the bot's event data, then re-posts fresh
+   IDLE panels at the bottom of both channels (Abort does the same). **The
+   sheet and docs stay in the manager's Drive** — nothing to export.
 
 ## Operational notes
 

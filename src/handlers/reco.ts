@@ -1,7 +1,7 @@
 // RECOMMENDING-phase interactions (v3). Every Santa picks an anime for their
 // giftee (the previous row in the loop) through the MAL wizard; the giftee
 // answers Thank you!😊 (accepts — reversible until Launch via the red
-// "No. I'll decline it.😞") or Sorry😞 (sends it back). Declining spends the
+// "I changed my mind to decline it😞") or Sorry😞 (sends it back). Declining spends the
 // events.max_declines budget; a spent budget only removes the decline
 // buttons — nothing locks until Launch sweeps the still-pending picks.
 //
@@ -77,7 +77,7 @@ interface RecoCtx {
 /** Wrong-thread protection: `ax:reco*:{uid}` buttons act only for their owner. */
 function ownedBy(c: HCtx, ownerArg: string): Response | null {
   if (ownerArg && ownerArg !== c.userId) {
-    return respond.ephemeral({ content: `🔒 These buttons belong to <@${ownerArg}> — check your own thread, or press **🎯 My Status** on the panel.` });
+    return respond.ephemeral({ content: `🔒 These buttons belong to <@${ownerArg}> — check your own private thread.` });
   }
   return null;
 }
@@ -211,7 +211,6 @@ export async function recoPick(c: HCtx): Promise<Response> {
     });
   }
   await saveDraft(c, e.event_id, { ...draft, step: 'R_PICKED', chosen_json: JSON.stringify(chosen) });
-  const left = Math.max(0, e.max_declines - giftee.declines_used);
   return respond.update({
     content: `Send this pick to **${giftee.display_name}**?`,
     embeds: [embed({
@@ -220,7 +219,6 @@ export async function recoPick(c: HCtx): Promise<Response> {
       description: [
         chosen.title_en && chosen.title_en !== chosen.title ? chosen.title_en : null,
         `${chosen.type ?? '?'} · ${chosen.episodes ?? '?'} episodes · [MAL](${chosen.url})`,
-        left > 0 ? `They can send it back **${left}** more time(s).` : null,
       ].filter(Boolean).join('\n'),
       thumbnail: chosen.image ?? undefined,
     })],
@@ -289,10 +287,10 @@ export async function recoSend(c: HCtx): Promise<Response> {
     if (fresh.thread_id) {
       await postMessage(c.env, fresh.thread_id, recoCard(e, fresh)).catch((err) => {
         console.error('reco card post failed', err);
-        deliveryNote = '\n⚠ Couldn\'t post to their thread — they can still respond via **🎯 My Status** on the panel.';
+        deliveryNote = '\n⚠ Couldn\'t reach their thread — let your event manager know.';
       });
     } else {
-      deliveryNote = '\n⚠ They have no thread — they can respond via **🎯 My Status** on the panel.';
+      deliveryNote = '\n⚠ They have no thread — let your event manager know.';
     }
     const items = await getItems(c.env, e.event_id);
     await writeRecoCells(c.env, c.guild, e, items, fresh).catch((err) => {
@@ -345,7 +343,7 @@ export async function recoApprove(c: HCtx, ownerArg: string): Promise<Response> 
 }
 
 /**
- * [Sorry😞] on a pending pick, or [No. I'll decline it.😞] on an accepted one
+ * [Sorry😞] on a pending pick, or [I changed my mind to decline it😞] on an accepted one
  * — Thank you is reversible until Launch. Either way it consumes one decline
  * from the budget and sends the Santa back to picking.
  */
@@ -440,7 +438,7 @@ function statusPayload(e: EventRow, me: SignupRow, giftee: SignupRow): Record<st
       ? `✅ **${giftee.display_name}** accepted your pick: **${giftee.reco_title}**.`
       : giftee.reco_status === 'PENDING'
         ? `⏳ You sent **${giftee.reco_title}** to **${giftee.display_name}** — waiting for their reply.`
-        : `🎯 **${giftee.display_name}** is waiting for your pick${giftee.declines_used > 0 ? ` (they've sent ${giftee.declines_used} back so far)` : ''}.\n` +
+        : `🎯 **${giftee.display_name}** is waiting for your pick.\n` +
           `Their list: ${giftee.list_url || '*not provided*'}`;
   const incoming = accepted
     ? `✅ You accepted **${me.reco_title}**.${left > 0 ? ' You can still change your mind until the launch.' : ''}`
@@ -458,7 +456,7 @@ function statusPayload(e: EventRow, me: SignupRow, giftee: SignupRow): Record<st
     if (left > 0) buttons.push(btn(`ax:reco_no:${me.user_id}`, 'Sorry😞', Style.DANGER));
   }
   if (accepted && left > 0) {
-    buttons.push(btn(`ax:reco_no:${me.user_id}`, "No. I'll decline it.😞", Style.DANGER));
+    buttons.push(btn(`ax:reco_no:${me.user_id}`, 'I changed my mind to decline it😞', Style.DANGER));
   }
   if ((me.reco_status === 'PENDING' || accepted) && me.reco_url) {
     buttons.push(linkBtn(me.reco_url, '🔗 View on MAL'));
@@ -477,7 +475,8 @@ function statusPayload(e: EventRow, me: SignupRow, giftee: SignupRow): Record<st
   };
 }
 
-/** [🎯 My Status] on the participant panel — thread-free fallback surface. */
+/** Legacy: the pre-3.2 participant panel had a 🎯 My Status button; stale
+ *  clicks still get a useful answer. Threads are the primary status surface. */
 export async function recoStatusMe(c: HCtx): Promise<Response> {
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;

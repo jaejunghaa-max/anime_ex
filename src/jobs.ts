@@ -14,7 +14,7 @@ import {
   createDoc, docUrl, driveExportText, driveFileMeta, driveFlipAnyoneToReader, driveShareAnyone,
   GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
-import { repaintPanels } from './panels';
+import { repaintPanels, repostPanels } from './panels';
 import { lengthCell, rewriteSheet, scoreCell, writeReviewLinks, writeStatusCells } from './sheet';
 import { buildLoops, chunkLines, epochToZoned, now, truncate } from './util';
 
@@ -445,10 +445,11 @@ async function finishTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 
   // All threads gone → wipe the event. Cascades take signups/items/jobs/
   // reminders (this job included); drafts have no FK, wipe explicitly.
-  // Sheet and docs stay in the manager's Drive (§5.6). Panels reset to IDLE.
+  // Sheet and docs stay in the manager's Drive (§5.6). The IDLE panels are
+  // re-POSTED (old ones deleted) so they land at the bottom of their channels.
   await env.DB.batch([
     env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(event.event_id),
     env.DB.prepare('DELETE FROM events WHERE event_id = ?1').bind(event.event_id),
   ]);
-  await repaintPanels(env, cfg, guild.guild_id);
+  await repostPanels(env, cfg, guild.guild_id);
 }

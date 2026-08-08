@@ -264,7 +264,11 @@ const sum = (...bits: bigint[]) => bits.reduce((a, b) => a | b, 0n).toString();
 
 export function managerChannelOverwrites(guildId: string, managerRoleId: string, botId: string): Overwrite[] {
   return [
-    { id: guildId, type: 0, allow: '0', deny: sum(P.VIEW_CHANNEL) },
+    {
+      // @everyone: invisible AND explicitly unwritable — nobody chats here.
+      id: guildId, type: 0, allow: '0',
+      deny: sum(P.VIEW_CHANNEL, P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS, P.ADD_REACTIONS),
+    },
     {
       id: managerRoleId, type: 0,
       allow: sum(P.VIEW_CHANNEL, P.READ_MESSAGE_HISTORY),

@@ -7,17 +7,7 @@
 import type { EventRow, FormItem, SignupRow } from './types';
 import { btn, embed, linkBtn, row, Style } from './discord';
 import { declinedOf, answersOf } from './db';
-import { truncate, ts } from './util';
-
-function safeUrl(u: string | null): string | null {
-  if (!u) return null;
-  try {
-    new URL(u);
-    return u;
-  } catch {
-    return null;
-  }
-}
+import { ts } from './util';
 
 function visibleAnswerLines(giftee: SignupRow, items: FormItem[]): string {
   const answers = answersOf(giftee);
@@ -32,37 +22,36 @@ const animeLine = (s: SignupRow): string =>
 
 /**
  * Posted in the RECOMMENDER's thread by the prepare job: who their giftee is,
- * the giftee's list link + 👁-visible answers, and the Recommend button.
+ * their info as one bullet list (list link + 👁-visible answers), and the
+ * Recommend button. No decline-budget numbers — the Santa never sees counts.
  */
 export function taskCard(
   event: EventRow, me: SignupRow, giftee: SignupRow, items: FormItem[],
 ): Record<string, unknown> {
-  const visibleLines = visibleAnswerLines(giftee, items);
-  const listUrl = safeUrl(giftee.list_url);
+  const infoLines = [
+    `• **list:** ${giftee.list_url || '—'}`,
+    visibleAnswerLines(giftee, items),
+  ].filter(Boolean).join('\n');
   const budget = event.max_declines === 0
-    ? 'They can\'t send picks back — study that list and make it count.'
-    : `They can send a pick back up to **${event.max_declines}** time(s) with Sorry😞 — study that list and make it count.`;
+    ? `They can't send picks back — make it count.`
+    : `They can send a pick back with Sorry😞.`;
   return {
     content: `<@${me.user_id}> your secret mission is here! 🎯`,
     embeds: [embed({
       title: `🎯 You are the Secret Santa of ${giftee.display_name}`,
       description:
         `Study **${giftee.display_name}**'s (<@${giftee.user_id}>) taste and recommend an anime they'll love.\n` +
-        `**Their list:** ${listUrl ?? (giftee.list_url || '*not provided*')}` +
-        (visibleLines ? `\n\nWhat they shared with you:\n${visibleLines}` : '') +
-        `\n\n${budget}\n*They don't know it's you — identities stay secret until the reveal.* 🤫`,
+        `${infoLines}\n\n` +
+        `${budget}\n*They don't know it's you — identities stay secret until the reveal.* 🤫`,
     })],
-    components: [row(...[
-      listUrl ? linkBtn(listUrl, '📚 Open their list') : null,
-      btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY),
-    ].filter(Boolean) as unknown[])],
+    components: [row(btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY))],
   };
 }
 
 /**
  * Posted in the GIFTEE's thread on every send, and re-rendered in place when
  * they answer. PENDING carries Thank you! (+ Sorry, while the budget lasts);
- * an accepted pick keeps a red "No. I'll decline it.😞" until Launch — Thank
+ * an accepted pick keeps a red "I changed my mind to decline it😞" until Launch — Thank
  * you is not an irreversible lock. Only the launch sweep (FORCED) is final.
  */
 export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unknown> {
@@ -83,7 +72,7 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
     choiceLine = `You said **Thank you!😊** — enjoy! 🍿` +
       (left > 0 ? `\nChanged your mind? You can still decline it until the launch.` : '');
     buttons = left > 0
-      ? [btn(`ax:reco_no:${giftee.user_id}`, "No. I'll decline it.😞", Style.DANGER)]
+      ? [btn(`ax:reco_no:${giftee.user_id}`, 'I changed my mind to decline it😞', Style.DANGER)]
       : [];
   } else {
     choiceLine = `Locked in at launch. Enjoy! 🍿`;
@@ -102,16 +91,17 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
   };
 }
 
-/** Posted in the SANTA's thread when their pick is declined. */
+/** Posted in the SANTA's thread when their pick is declined. Deliberately
+ *  count-free: the Santa never learns how many Sorry😞s remain. */
 export function declineNotice(
-  event: EventRow, santa: SignupRow, giftee: SignupRow, declinedTitle: string,
+  _event: EventRow, santa: SignupRow, giftee: SignupRow, declinedTitle: string,
 ): Record<string, unknown> {
   const already = declinedOf(giftee).map((d) => d.title);
   return {
-    content: `<@${santa.user_id}> 😞 **${giftee.display_name}** sent your pick back — round ${giftee.declines_used + 1}!`,
+    content: `<@${santa.user_id}> 😞 **${giftee.display_name}** sent your pick back!`,
     embeds: [embed({
       description:
-        `**${declinedTitle}** was declined (${giftee.declines_used}/${event.max_declines} Sorry😞s used).` +
+        `**${declinedTitle}** was declined.` +
         (already.length ? `\nAlready declined: ${already.map((t) => `**${t}**`).join(', ')}` : ''),
     })],
     components: [row(btn(`ax:reco:${santa.user_id}`, '🎯 Recommend another', Style.PRIMARY))],
@@ -144,8 +134,9 @@ export function assignmentCard(
           `MAL/AniList: ${myGiftee.list_url || '—'}`,
       }),
       embed({
+        // No title url — "Your anime" stays unclickable; the MAL link lives
+        // in the body text instead.
         title: `🎬 Your anime: ${me.reco_title}${me.reco_year ? ` (${me.reco_year})` : ''}`,
-        url: me.reco_url ?? undefined,
         description:
           `${animeLine(me)}\n` +
           `Picked for you by your Secret Santa — *revealed at the end.*\n` +
@@ -164,11 +155,11 @@ export function assignmentCard(
   };
 }
 
-/** Posted in each thread by the close job. */
+/** Posted in each thread by the close job. The review link rides inline in
+ *  the sentence — "(read review)" — no button. */
 export function revealCard(
   me: SignupRow, santa: SignupRow, myGiftee: SignupRow,
 ): Record<string, unknown> {
-  const reviewTitle = `Review of ${myGiftee.reco_title} by ${myGiftee.display_name}`;
   const verdict = myGiftee.score !== null
     ? `gave your pick **${myGiftee.reco_title}** **⭐ ${myGiftee.score} stars**`
     : `didn't score your pick **${myGiftee.reco_title}**`;
@@ -180,8 +171,7 @@ export function revealCard(
         `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>) — ` +
         `they picked **${me.reco_title}** for you.\n\n` +
         `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) ${verdict}` +
-        `${myGiftee.doc_url ? ':' : ' — but their review doc is missing.'}`,
+        `${myGiftee.doc_url ? ` ([read review](${myGiftee.doc_url}))` : ' — but their review doc is missing.'}`,
     })],
-    components: myGiftee.doc_url ? [row(linkBtn(myGiftee.doc_url, `📖 ${truncate(reviewTitle, 70)}`))] : [],
   };
 }

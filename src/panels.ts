@@ -3,7 +3,7 @@
 // correctly — panels are re-rendered from scratch on every change.
 
 import type { Cfg, Env, EventRow, GuildRow, JobRow } from './types';
-import { btn, editMessage, embed, linkBtn, row, Style } from './discord';
+import { btn, dapi, editMessage, embed, pinMessage, postMessage, row, Style } from './discord';
 import { isConnected, sheetUrl } from './google';
 import { loopsPhrase, ts } from './util';
 
@@ -98,6 +98,10 @@ const abortBtn = () => btn('ax:abort', '🛑 Abort', Style.DANGER);
 
 const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google' : '🔗 Connect Google');
 
+/** The sheet travels in the panel body on every state that has one — the
+ *  panels carry no View Sheet buttons. */
+const sheetLine = (e: EventRow): string => (e.sheet_id ? `\nSheet: ${sheetUrl(e.sheet_id)}` : '');
+
 export interface ItemSummary { label: string; type: 'FIB' | 'MCQ'; optionCount: number; visible: boolean }
 
 // ---------------------------------------------------------- manager panel
@@ -120,7 +124,6 @@ export function renderManagerPanel(
   }
 
   const e = event;
-  const sheetBtn = e.sheet_id ? linkBtn(sheetUrl(e.sheet_id), '📋 View Sheet') : null;
 
   switch (e.state) {
     case 'DRAFTING': {
@@ -168,14 +171,13 @@ export function renderManagerPanel(
           description:
             `**Deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})` +
             `${e.auto_stop ? ' · auto-stop **on**' : ''}\n` +
-            `**${stats.count}** signed up\n${googleLine(guild)}`,
+            `**${stats.count}** signed up\n${googleLine(guild)}${sheetLine(e)}`,
         })],
-        components: [row(...[
-          sheetBtn,
-          btn('ax:view_signups', '📋 View Sign-Ups'),
+        components: [row(
+          btn('ax:refresh', '🔄 Refresh'),
           btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
           abortBtn(),
-        ].filter(Boolean) as unknown[])],
+        )],
       };
     case 'MATCHING': {
       // Loops summary as of the last adoption into D1 (rev. 3 §5.4).
@@ -189,15 +191,14 @@ export function renderManagerPanel(
           title: `🔀 Matching — ${e.topic}`,
           description:
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
+            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}${sheetLine(e)}`,
         })],
         components: [
-          row(...[
-            sheetBtn,
+          row(
             btn('ax:grouping', '🧩 Grouping'),
             btn('ax:shuffle', '🔀 Shuffle'),
             btn('ax:validate', '✅ Validate'),
-          ].filter(Boolean) as unknown[]),
+          ),
           row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:reco_start', '🎯 Start Recommending', Style.SUCCESS), abortBtn()),
         ],
       };
@@ -211,9 +212,9 @@ export function renderManagerPanel(
           title: `🎯 Preparing — ${e.topic}`,
           description:
             `Creating private threads and delivering Santa missions… **${stats.prepared} / ${stats.count}** · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob) + abortingLine(stats),
+            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
         })],
-        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
+        components: [row(abortBtn())],
       };
     }
     case 'RECOMMENDING': {
@@ -232,14 +233,13 @@ export function renderManagerPanel(
             `**${stats.recoFinal} / ${stats.count}** picks accepted · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
             `Each person may send a pick back **${e.max_declines}** time(s) — and accepted picks stay changeable until Launch.\n` +
             statusLine +
-            `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
+            `\n${googleLine(guild)}${sheetLine(e)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [
-          row(...[
-            sheetBtn,
-            btn('ax:reco_view', '📊 View Status'),
+          row(
+            btn('ax:refresh', '🔄 Refresh'),
             btn('ax:remind', '📣 Remind Now'),
-          ].filter(Boolean) as unknown[]),
+          ),
           row(
             btn('ax:back_matching', '↩ Back to Matching'),
             btn('ax:launch', '🚀 Launch', ready ? Style.SUCCESS : Style.SECONDARY),
@@ -257,9 +257,9 @@ export function renderManagerPanel(
           title: `🚀 Launching — ${e.topic}`,
           description:
             `**${stats.launched} / ${stats.count}** review docs + assignment cards delivered · ~${eta} min remaining (automatic)` +
-            stallLine(stats.activeJob) + abortingLine(stats),
+            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
         })],
-        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
+        components: [row(abortBtn())],
       };
     }
     case 'RUNNING': {
@@ -270,16 +270,15 @@ export function renderManagerPanel(
           title: `🎬 Running — ${e.topic}`,
           description:
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
-            `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
+            `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}${sheetLine(e)}` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: [row(...[
-          sheetBtn,
+        components: [row(
           btn('ax:refresh', '🔄 Refresh'),
           btn('ax:remind', '📣 Remind Now'),
           btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
           abortBtn(),
-        ].filter(Boolean) as unknown[])],
+        )],
       };
     }
     case 'CLOSING': {
@@ -291,9 +290,9 @@ export function renderManagerPanel(
           description:
             `Flipping docs read-only and posting reveals… **${done} / ${stats.count}**\n` +
             `(read-only: ${stats.flipped}/${stats.count} · reveals: ${stats.revealed}/${stats.count})` +
-            stallLine(stats.activeJob) + abortingLine(stats),
+            stallLine(stats.activeJob) + abortingLine(stats) + sheetLine(e),
         })],
-        components: [row(...[sheetBtn, abortBtn()].filter(Boolean) as unknown[])],
+        components: [row(abortBtn())],
       };
     }
     case 'REVEALED': {
@@ -306,9 +305,9 @@ export function renderManagerPanel(
           title: `🎉 Revealed — ${e.topic}`,
           description:
             `**${stats.count}** participants · ${loopsPhrase(stats.groupSizes)} · review deadline was ${ts(e.review_deadline!)}\n` +
-            `Docs are view-only; reveals are posted in participant threads.` + finishing,
+            `Docs are view-only; reveals are posted in participant threads.${sheetLine(e)}` + finishing,
         })],
-        components: [row(...[sheetBtn, btn('ax:finish', '🧹 Finish', Style.PRIMARY), abortBtn()].filter(Boolean) as unknown[])],
+        components: [row(btn('ax:finish', '🧹 Finish', Style.PRIMARY), abortBtn())],
       };
     }
     default:
@@ -355,8 +354,7 @@ export function renderParticipantPanel(
             `**Sign-up form:** your MAL/AniList link + ${itemCount} question(s)${banner}`,
         })],
         components: [row(
-          btn('ax:signup', '📝 Sign Up', Style.PRIMARY),
-          btn('ax:edit_signup', '✏ Edit My Sign-Up'),
+          btn('ax:signup', '📝 Sign Up/Edit', Style.PRIMARY),
           btn('ax:withdraw', '🚪 Withdraw', Style.DANGER),
         )],
       };
@@ -386,11 +384,12 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
-            `🎯 **Recommendation time!** Check your private thread: pick an anime for your person, and answer the pick you receive with **Thank you!😊** or **Sorry😞**` +
+            `🎯 **Recommendation time!** Pick an anime for your person, and answer the pick you receive with **Thank you!😊** or **Sorry😞**` +
             `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''}, even after accepting — until launch)` : ''}.\n` +
+            `See your **private thread** to see your status.\n` +
             `**${stats.recoFinal} / ${stats.count}** picks accepted so far.`,
         })],
-        components: [row(btn('ax:reco_me', '🎯 My Status', Style.PRIMARY))],
+        components: [],
       };
     case 'LAUNCHING':
       return {
@@ -437,17 +436,16 @@ export function renderParticipantPanel(
 
 // ----------------------------------------------------------------- repaint
 
-/** Re-render both panels from D1 and PATCH them in place. Failures are logged,
- *  never thrown — a deleted panel is repaired via /setup repair (§3.1). */
-export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promise<void> {
+async function loadPanelState(env: Env, guildId: string): Promise<{
+  guild: GuildRow; event: EventRow | null; stats: PanelStats; items: ItemSummary[];
+} | null> {
   const guild = await env.DB.prepare('SELECT * FROM guilds WHERE guild_id = ?1')
     .bind(guildId).first<GuildRow>();
-  if (!guild) return;
+  if (!guild) return null;
   const event = await env.DB.prepare('SELECT * FROM events WHERE guild_id = ?1')
     .bind(guildId).first<EventRow>();
   const stats = await panelStats(env, event);
   let items: ItemSummary[] = [];
-  let itemCount = 0;
   if (event) {
     const res = await env.DB
       .prepare('SELECT label, type, options_json, visible_to_recommender FROM form_items WHERE event_id = ?1 ORDER BY position')
@@ -458,8 +456,16 @@ export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promis
       optionCount: r.options_json ? (JSON.parse(r.options_json) as string[]).length : 0,
       visible: !!r.visible_to_recommender,
     }));
-    itemCount = items.length;
   }
+  return { guild, event, stats, items };
+}
+
+/** Re-render both panels from D1 and PATCH them in place. Failures are logged,
+ *  never thrown — a deleted panel is repaired via /setup repair (§3.1). */
+export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promise<void> {
+  const s = await loadPanelState(env, guildId);
+  if (!s) return;
+  const { guild, event, stats, items } = s;
   const jobs: Promise<unknown>[] = [];
   if (guild.manager_channel_id && guild.manager_msg_id) {
     jobs.push(
@@ -471,9 +477,57 @@ export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promis
   if (guild.participant_channel_id && guild.participant_msg_id) {
     jobs.push(
       editMessage(env, guild.participant_channel_id, guild.participant_msg_id,
-        renderParticipantPanel(cfg, guild, event, stats, itemCount))
+        renderParticipantPanel(cfg, guild, event, stats, items.length))
         .catch((e) => console.error('participant panel repaint failed', e)),
     );
   }
   await Promise.all(jobs);
+}
+
+/** Post a panel, pin it, and sweep the "pinned a message" system notice. */
+export async function postAndPinPanel(env: Env, channelId: string, payload: unknown): Promise<string> {
+  const msg = await postMessage(env, channelId, payload);
+  await pinMessage(env, channelId, msg.id).catch(() => {});
+  const recent = await dapi<Array<{ id: string; type: number }>>(
+    env, 'GET', `/channels/${channelId}/messages?limit=5`,
+  ).catch(() => [] as Array<{ id: string; type: number }>);
+  for (const m of recent) {
+    if (m.type === 6) await dapi(env, 'DELETE', `/channels/${channelId}/messages/${m.id}`).catch(() => {});
+  }
+  return msg.id;
+}
+
+/**
+ * Delete both pinned panels and post fresh ones, so they land at the BOTTOM
+ * of their channels — run when an event finishes or is aborted (an old pinned
+ * panel far up in the scrollback is easy to miss). Per-channel failures leave
+ * the stored id pointing at whatever exists; /setup repair recovers.
+ */
+export async function repostPanels(env: Env, cfg: Cfg, guildId: string): Promise<void> {
+  const s = await loadPanelState(env, guildId);
+  if (!s) return;
+  const { guild, event, stats, items } = s;
+  const targets = [
+    {
+      channel: guild.manager_channel_id, msg: guild.manager_msg_id,
+      column: 'manager_msg_id', payload: renderManagerPanel(cfg, guild, event, stats, items),
+    },
+    {
+      channel: guild.participant_channel_id, msg: guild.participant_msg_id,
+      column: 'participant_msg_id', payload: renderParticipantPanel(cfg, guild, event, stats, items.length),
+    },
+  ];
+  for (const t of targets) {
+    if (!t.channel) continue;
+    try {
+      if (t.msg) {
+        await dapi(env, 'DELETE', `/channels/${t.channel}/messages/${t.msg}`).catch(() => {});
+      }
+      const id = await postAndPinPanel(env, t.channel, t.payload);
+      await env.DB.prepare(`UPDATE guilds SET ${t.column} = ?1 WHERE guild_id = ?2`)
+        .bind(id, guildId).run();
+    } catch (e) {
+      console.error(`panel repost failed for ${t.column}`, e);
+    }
+  }
 }

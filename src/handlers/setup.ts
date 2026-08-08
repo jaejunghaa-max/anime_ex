@@ -5,9 +5,9 @@
 import type { Cfg, Env, EventRow, GuildRow, Interaction } from '../types';
 import {
   addMemberRole, createChannel, createRole, dapi, DiscordApiError, editOriginal,
-  managerChannelOverwrites, participantChannelOverwrites, pinMessage, postMessage, respond,
+  managerChannelOverwrites, participantChannelOverwrites, respond,
 } from '../discord';
-import { panelStats, renderManagerPanel, renderParticipantPanel } from '../panels';
+import { panelStats, postAndPinPanel, renderManagerPanel, renderParticipantPanel } from '../panels';
 import { now } from '../util';
 
 const MANAGER_CHANNEL = 'anime-exchange-manager';
@@ -33,18 +33,6 @@ async function exists(env: Env, path: string): Promise<boolean> {
   }
 }
 
-/** Post a panel, pin it, and sweep the "pinned a message" system notice. */
-async function postPanel(env: Env, channelId: string, payload: unknown): Promise<string> {
-  const msg = await postMessage(env, channelId, payload);
-  await pinMessage(env, channelId, msg.id).catch(() => {});
-  const recent = await dapi<Array<{ id: string; type: number }>>(
-    env, 'GET', `/channels/${channelId}/messages?limit=5`,
-  ).catch(() => [] as Array<{ id: string; type: number }>);
-  for (const m of recent) {
-    if (m.type === 6) await dapi(env, 'DELETE', `/channels/${channelId}/messages/${m.id}`).catch(() => {});
-  }
-  return msg.id;
-}
 
 export async function handleSetup(
   env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction,
@@ -111,6 +99,12 @@ async function doSetup(
     g.manager_channel_id = ch.id;
     g.manager_msg_id = null;
     notes.push(`Created <#${ch.id}>.`);
+  } else {
+    // Existing channel: re-apply the current permission set (read-only for
+    // everyone — nobody can send), so perm changes land via /setup repair.
+    await dapi(env, 'PATCH', `/channels/${g.manager_channel_id}`, {
+      permission_overwrites: managerChannelOverwrites(guildId, g.manager_role_id!, botId),
+    }).catch((e) => console.error('manager channel perms patch failed', e));
   }
   if (!g.participant_channel_id || !(await exists(env, `/channels/${g.participant_channel_id}`))) {
     const ch = await createChannel(env, guildId, PARTICIPANT_CHANNEL,
@@ -119,6 +113,10 @@ async function doSetup(
     g.participant_channel_id = ch.id;
     g.participant_msg_id = null;
     notes.push(`Created <#${ch.id}>.`);
+  } else {
+    await dapi(env, 'PATCH', `/channels/${g.participant_channel_id}`, {
+      permission_overwrites: participantChannelOverwrites(guildId, botId),
+    }).catch((e) => console.error('participant channel perms patch failed', e));
   }
 
   // 4. Panels (rendered from current D1 state — repair-safe).
@@ -126,12 +124,12 @@ async function doSetup(
     .bind(guildId).first<EventRow>();
   const stats = await panelStats(env, event);
   if (!g.manager_msg_id || !(await exists(env, `/channels/${g.manager_channel_id}/messages/${g.manager_msg_id}`))) {
-    g.manager_msg_id = await postPanel(env, g.manager_channel_id!,
+    g.manager_msg_id = await postAndPinPanel(env, g.manager_channel_id!,
       renderManagerPanel(cfg, g, event, stats, []));
     notes.push('Posted + pinned the manager panel.');
   }
   if (!g.participant_msg_id || !(await exists(env, `/channels/${g.participant_channel_id}/messages/${g.participant_msg_id}`))) {
-    g.participant_msg_id = await postPanel(env, g.participant_channel_id!,
+    g.participant_msg_id = await postAndPinPanel(env, g.participant_channel_id!,
       renderParticipantPanel(cfg, g, event, stats, 0));
     notes.push('Posted + pinned the participant panel.');
   }

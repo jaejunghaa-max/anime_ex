@@ -118,18 +118,16 @@ function prefillAnswers(
 
 // ------------------------------------------------------------ wizard steps
 
-/** [📝 Sign Up] / [✏ Edit My Sign-Up] → Modal A, prefilled from draft ?? existing signup. */
-export async function signupStart(c: HCtx, editing: boolean): Promise<Response> {
+/** [📝 Sign Up/Edit] → Modal A, prefilled from draft ?? existing signup —
+ *  one button covers first-time signup and edits alike. */
+export async function signupStart(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || e.state !== 'SIGNUP_OPEN') {
     return stale(c, e && ['MATCHING', 'PREPARING', 'RECOMMENDING', 'LAUNCHING', 'RUNNING', 'CLOSING', 'REVEALED'].includes(e.state)
       ? 'Sign-ups are closed.' : 'No sign-up is open right now.');
   }
   const existing = await getSignup(c.env, e.event_id, c.userId);
-  if (editing && !existing) {
-    return respond.ephemeral({ content: 'You haven\'t signed up yet — press **📝 Sign Up** instead.' });
-  }
-  if (!editing && !existing) {
+  if (!existing) {
     const n = await countSignups(c.env, e.event_id);
     if (n >= c.cfg.maxParticipants) {
       return respond.ephemeral({ content: `⚠ The event is full (**${c.cfg.maxParticipants}** participants).` });
@@ -204,7 +202,7 @@ export async function signupForce(c: HCtx): Promise<Response> {
   const draft = await loadDraft(c, e.event_id);
   const answers = parseJson<Record<string, string>>(draft?.partial_answers_json ?? null, {});
   if (!draft || !(answers[LINK_KEY] ?? '').trim()) {
-    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.', embeds: [], components: [] });
+    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
   const items = await getItems(c.env, e.event_id);
   return respond.update(nextStep(items, answers));
@@ -216,7 +214,7 @@ export async function signupContinue(c: HCtx): Promise<Response> {
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const draft = await loadDraft(c, e.event_id);
   if (!draft) {
-    return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.' });
+    return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.' });
   }
   const items = await getItems(c.env, e.event_id);
   const existing = await getSignup(c.env, e.event_id, c.userId);
@@ -233,7 +231,7 @@ export async function signupModalB(c: HCtx): Promise<Response> {
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   const draft = await loadDraft(c, e.event_id);
   if (!draft) {
-    return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.' });
+    return respond.ephemeral({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.' });
   }
   const items = await getItems(c.env, e.event_id);
   const answers = {
@@ -294,7 +292,7 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   // An off-site link is only reachable via [⚠ Proceed anyway] — keep it as typed.
   const link = normalizeListUrl(raw) ?? truncate(raw, 300);
   if (!draft || !link) {
-    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.', embeds: [], components: [] });
+    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
   const itemAnswers = { ...answers };
   delete itemAnswers[LINK_KEY];
@@ -332,7 +330,7 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
     }
     await throttledCountRepaint(c, e.event_id);
     await editOriginal(c.env, c.i.token, {
-      content: `🎉 **You're in!** Your Secret Santa will pick from your list. You can edit or withdraw until sign-ups close.${sheetNote}`,
+      content: `🎉 **You're in!** Your Secret Santa will recommend an anime for you. You can update your sign-up or withdraw until sign-ups close.${sheetNote}`,
       embeds: [], components: [],
     });
   });

@@ -41,7 +41,8 @@ mission, their pick, reminders, and the reveal.
 
 ### Signing up
 
-1. Press **📝 Sign Up** on the pinned panel while sign-ups are open.
+1. Press **📝 Sign Up/Edit** on the pinned panel while sign-ups are open —
+   the same button updates an existing sign-up (the form comes pre-filled).
 2. Fill in the built-in **"Link of your MAL/AniList"** field — e.g.
    `https://myanimelist.net/profile/you`, `https://myanimelist.net/animelist/you`
    or `https://anilist.co/user/you`. This is what your Secret Santa studies to
@@ -51,8 +52,8 @@ mission, their pick, reminders, and the reveal.
    are more than four).
 3. Review the **summary card** and press **✅ Confirm Sign-Up**.
 
-Until sign-ups close you can press **✏ Edit My Sign-Up** (same form,
-pre-filled) or **🚪 Withdraw**. If you wander off mid-wizard, your progress is
+Until sign-ups close you can press **📝 Sign Up/Edit** again to change your
+answers, or **🚪 Withdraw**. If you wander off mid-wizard, your progress is
 kept for 30 minutes.
 
 Some questions are marked **👁 visible to your recommender** — your Secret
@@ -62,18 +63,22 @@ answers are only on the manager's sheet.
 ### Your mission 🎯
 
 When the manager starts the recommendation phase, a private thread named
-`🎁 {your name}` appears with your **mission card**:
+`🎁 {your name}` appears with your **mission card** — who you're the Secret
+Santa of, with their info as a simple list:
 
-> 🎯 You are the Secret Santa of **rabbit** — here's their list
-> (`📚 Open their list`) and what they shared. They can send a pick back
-> **2** times. They don't know it's you. 🤫
+> 🎯 You are the Secret Santa of **rabbit**
+> • **list:** https://myanimelist.net/profile/rabbit
+> • **favorite genre:** mecha
+> They can send a pick back with Sorry😞. They don't know it's you. 🤫
+
+(You never see how many declines they have left — pick with your heart.)
 
 Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
 both work — "frieren", "Sousou no Frieren" and 「葬送のフリーレン」 all find
 the same show), pick the right season from the results, and **📨 Send** it.
 
-- If they decline, you get a ping with the round count and which titles
-  they've already sent back (you can't re-pick those).
+- If they decline, you get a ping with which titles they've already sent back
+  (you can't re-pick those).
 - When they accept, you get a 🎉 ping.
 
 ### Your pick 🎁
@@ -82,8 +87,8 @@ When *your* Secret Santa sends a pick, your thread gets a card with the anime
 (cover, year, episodes, MAL link) and two buttons:
 
 - **Thank you!😊** — accepts it. Accepting is **not** a hard lock: a red
-  **No. I'll decline it.😞** button stays on the card, so you can change your
-  mind any time **until the manager launches** the event.
+  **I changed my mind to decline it😞** button stays on the card, so you can
+  change your mind any time **until the manager launches** the event.
 - **Sorry😞** — sends it back and your Santa picks again. Declining (before
   *or* after accepting) spends one of your Sorry😞s; the manager sets how many
   you get. Once they're spent, the buttons to send picks back disappear.
@@ -91,8 +96,8 @@ When *your* Secret Santa sends a pick, your thread gets a card with the anime
 Picks that are still unanswered when the manager launches lock in
 automatically. At launch, everything is final.
 
-Lost a thread? Press **🎯 My Status** on the pinned panel — it shows both your
-mission and your pick, with the same buttons.
+Your private thread is your status view — every card and ping about your
+mission and your pick lives there.
 
 ### The event itself
 
@@ -119,8 +124,8 @@ your thread gets the reveal card:
 
 > Your Secret Santa was **J** (@J) — they picked **Sousou no Frieren** for you.
 >
-> **rabbit** (@rabbit) gave your pick **Kaijuu 8-gou** **⭐ 8 stars**:
-> `[📖 Review of Kaijuu 8-gou by rabbit]`
+> **rabbit** (@rabbit) gave your pick **Kaijuu 8-gou** **⭐ 8 stars**
+> ([read review](…)) — or "didn't score your pick …" if they never rated it.
 
 If the manager chose a public gallery, `#anime-exchange` also gets the whole
 loop, one line per participant:
@@ -161,7 +166,9 @@ loop, one line per participant:
 - **🗑 Discard** deletes the draft.
 
 **SIGNUP_OPEN**
-- **📋 View Sign-Ups** — count, five most recent names, sheet link.
+- The panel shows the live count and links the sheet in its body (as every
+  later state does — `Sheet: https://…`); **🔄 Refresh** updates the count
+  instantly instead of waiting out the 1-minute throttle.
 - If the deadline passes with auto-stop off, the participant panel shows
   "⏰ Deadline passed — still accepting until the manager closes sign-ups."
 - **⏸ Stop Sign-Ups** moves to Matching (reversible via Reopen).
@@ -195,9 +202,10 @@ RECOMMENDING by itself.
 **RECOMMENDING — the heart of v3.** The panel shows
 `accepted / awaiting reply / waiting on their Santa` counts live.
 
-- **📊 View Status** — one line per participant: what they were picked,
-  whether it's ✅ accepted / ⏳ awaiting reply / 🎁 still waiting (with
-  decline counts).
+- **🔄 Refresh** — updates those counts instantly. The per-pair detail (who
+  was picked what, ✅/⏳/😞 status, decline counts) lives in the sheet's
+  **Recommendation / Rec. Status** columns — the sheet is linked in the
+  panel body.
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
   haven't picked (or got declined and haven't re-picked), and giftees sitting
   on a pending pick. The nudge lands in their thread with the right buttons.
@@ -216,8 +224,8 @@ about 5 per minute; the panel counts up and flips to RUNNING by itself.
 Redeploys or crashes lose nothing — it resumes where it left off.
 
 **RUNNING**
-- The panel always links **📋 View Sheet** — the sheet is the detail view
-  (per-participant Review Length, Score, `⚠ missing` flags).
+- The panel body links the sheet — the detail view (per-participant Review
+  Length, Score, `⚠ missing` flags).
 - **🔄 Refresh** — queues a status refresh; the panel and sheet update within
   a minute or two. Status also refreshes on its own every 30 minutes.
 - **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
@@ -229,13 +237,14 @@ view-only before any reveal link is posted**, then reveal cards (and the
 gallery, if chosen) go out.
 
 **REVEALED → 🧹 Finish** — deletes the private threads and the bot's event
-data, and resets both panels. **Your Google Sheet and Docs stay in your
-Drive.** A new event can start immediately.
+data, then **re-posts fresh panels at the bottom of both channels** (the old
+pinned ones are removed, so nobody has to scroll up to find them). **Your
+Google Sheet and Docs stay in your Drive.** A new event can start immediately.
 
 **🛑 Abort** — available in every state as the red escape hatch. It cancels
-any stuck job, removes threads, wipes the bot's event data, and resets the
-panels — Drive files are never touched. Use it whenever an event is wedged; it
-cannot be undone.
+any stuck job, removes threads, wipes the bot's event data, and re-posts
+fresh panels at the bottom of both channels — Drive files are never touched.
+Use it whenever an event is wedged; it cannot be undone.
 
 ### The spreadsheet
 
@@ -297,9 +306,9 @@ when it's gone the decline buttons disappear. You can still press
 declines wisely.
 
 **I said Thank you!😊 but changed my mind.**
-Press the red **No. I'll decline it.😞** on the card (or via **🎯 My
-Status**) — it works until the manager launches, as long as you have
-Sorry😞s left.
+Press the red **I changed my mind to decline it😞** on the card in your
+thread — it works until the manager launches, as long as you have Sorry😞s
+left.
 
 **My giftee declined everything and now won't respond.**
 They can't decline forever (the budget), and a pick stuck **⏳ awaiting
@@ -314,8 +323,8 @@ Validate's removal flow, regroup, and start recommending again.
 
 **I clicked a button in a thread and it said the buttons belong to someone
 else.**
-Cards only obey their owner. Find your own thread, or use **🎯 My Status** on
-the pinned panel.
+Cards only obey their owner — find your own private thread and use the
+buttons there.
 
 **Search says "Try a different keyword — or try again in a minute."**
 All search sources failed for that query. Very short keywords (under 3

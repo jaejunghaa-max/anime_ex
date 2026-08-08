@@ -9,6 +9,7 @@ import {
   btn, editOriginal, embed, linkBtn, modalSelect, modalText, respond, row, stringSelect, Style,
 } from '../discord';
 import { getItems, countSignups, dbBatchChunked, loopContext, optionsOf, orderedSignups, transition } from '../db';
+import { repostPanels } from '../panels';
 import { createSpreadsheet, isConnected, sheetUrl } from '../google';
 import { rewriteSheet, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
@@ -841,22 +842,47 @@ export async function launchGo(c: HCtx): Promise<Response> {
 
 // ---------------------------------------------------------------- RUNNING
 
-/** [🔄 Refresh] — queue a wrote-detection sync; the detail view is the sheet,
- *  which the panel now links at all times. */
+/** [🔄 Refresh] — SIGNUP_OPEN/RECOMMENDING: repaint the panel with fresh
+ *  counts right now (skipping the 60 s throttle). RUNNING: queue a
+ *  wrote-detection sync. The detail view is always the sheet, linked in the
+ *  panel body. */
 export async function refreshStatus(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RUNNING');
+  const e = needState(c, 'SIGNUP_OPEN', 'RECOMMENDING', 'RUNNING');
   if (!e) return stale(c);
-  const queued = await enqueueJob(c, e.event_id, 'sync');
-  const agg = await c.env.DB
-    .prepare('SELECT COALESCE(SUM(wrote), 0) AS started, COUNT(*) AS n FROM signups WHERE event_id = ?1')
-    .bind(e.event_id).first<{ started: number; n: number }>();
-  return respond.ephemeral({
-    content:
-      (queued
-        ? '🔄 **Status refresh queued** — the panel and sheet update within a minute or two.'
-        : '🔄 A refresh is already running — the panel and sheet update within a minute or two.') +
-      `\n✍ **${agg?.started ?? 0} / ${agg?.n ?? 0}** started writing · full detail in the sheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+  if (e.state === 'RUNNING') {
+    const queued = await enqueueJob(c, e.event_id, 'sync');
+    const agg = await c.env.DB
+      .prepare('SELECT COALESCE(SUM(wrote), 0) AS started, COUNT(*) AS n FROM signups WHERE event_id = ?1')
+      .bind(e.event_id).first<{ started: number; n: number }>();
+    return respond.ephemeral({
+      content:
+        (queued
+          ? '🔄 **Status refresh queued** — the panel and sheet update within a minute or two.'
+          : '🔄 A refresh is already running — the panel and sheet update within a minute or two.') +
+        `\n✍ **${agg?.started ?? 0} / ${agg?.n ?? 0}** started writing · full detail in the sheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+    });
+  }
+  bg(c, async () => {
+    await repaint(c);
+    if (e.state === 'SIGNUP_OPEN') {
+      const n = await countSignups(c.env, e.event_id);
+      await editOriginal(c.env, c.i.token, { content: `🔄 Refreshed — **${n}** signed up.` });
+    } else {
+      const agg = await c.env.DB.prepare(
+        `SELECT COUNT(*) AS n,
+                COALESCE(SUM(CASE WHEN reco_status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final,
+                COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending
+         FROM signups WHERE event_id = ?1`,
+      ).bind(e.event_id).first<{ n: number; final: number; pending: number }>();
+      const n = agg?.n ?? 0;
+      const final = agg?.final ?? 0;
+      const pending = agg?.pending ?? 0;
+      await editOriginal(c.env, c.i.token, {
+        content: `🔄 Refreshed — **${final} / ${n}** accepted · ⏳ **${pending}** awaiting a reply · 🎁 **${Math.max(0, n - final - pending)}** waiting on their Santa.`,
+      });
+    }
   });
+  return respond.deferEphemeral();
 }
 
 /**
@@ -1012,14 +1038,16 @@ export async function abortGo(c: HCtx): Promise<Response> {
       .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND thread_id IS NOT NULL')
       .bind(e.event_id).first<{ n: number }>();
     if ((hasThreads?.n ?? 0) === 0) {
-      // Nothing launched yet → instant teardown, no fan-out needed.
+      // Nothing launched yet → instant teardown, no fan-out needed. Panels are
+      // re-posted (not edited) so the fresh IDLE panels sit at the bottom of
+      // their channels.
       await c.env.DB.batch([
         c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
         c.env.DB.prepare('DELETE FROM events WHERE event_id = ?1').bind(e.event_id),
       ]);
-      await repaint(c);
+      await repostPanels(c.env, c.cfg, c.guild.guild_id);
       await editOriginal(c.env, c.i.token, {
-        content: '🛑 **Event aborted** — panels reset. The sheet (if created) stays in your Drive.',
+        content: '🛑 **Event aborted** — fresh panels posted. The sheet (if created) stays in your Drive.',
         components: [],
       });
       return;
