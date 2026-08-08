@@ -148,15 +148,15 @@ function itemModal(customId: string, item?: FormItem): Response {
   const visible = item ? !!item.visible_to_recommender : true;
   return respond.modal(customId, item ? 'Edit form item' : 'Add form item', [
     modalText('label', 'Question label', { value: item?.label ?? '', max: 100, placeholder: 'Favorite genre' }),
-    modalSelect('type', 'Type', [
-      { label: 'Fill-in (free text)', value: 'FIB', default: (item?.type ?? 'FIB') === 'FIB' },
-      { label: 'Multiple choice (2–10 options)', value: 'MCQ', default: item?.type === 'MCQ' },
-    ]),
     modalText('desc', 'Description (optional)', {
       required: false, value: item?.description ?? '', max: 100,
       placeholder: 'e.g. Pick the genre you watch the most',
       description: 'Shown under the question on the sign-up form',
     }),
+    modalSelect('type', 'Type', [
+      { label: 'Fill-in (free text)', value: 'FIB', default: (item?.type ?? 'FIB') === 'FIB' },
+      { label: 'Multiple choice (2–10 options)', value: 'MCQ', default: item?.type === 'MCQ' },
+    ]),
     modalText('options', 'MCQ options — one per line', {
       required: false, paragraph: true, value: opts.join('\n'), max: 1000,
       description: 'Only used for multiple choice',
