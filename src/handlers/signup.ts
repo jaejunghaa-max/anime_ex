@@ -10,7 +10,7 @@ import { modalFields } from '../types';
 import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
 import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
 import { rewriteSheet, writeScoreCell } from '../sheet';
-import { normalizeListUrl, now } from '../util';
+import { normalizeListUrl, now, sanitizeName, truncate } from '../util';
 import { bg, HCtx, stale, throttledCountRepaint } from './common';
 
 const DRAFT_TTL = 30 * 60;
@@ -170,22 +170,44 @@ export async function signupModalA(c: HCtx): Promise<Response> {
         '⚠ That doesn\'t look like a MAL/AniList link. Use your profile or list URL, e.g.\n' +
         '`https://myanimelist.net/profile/you` · `https://myanimelist.net/animelist/you` · `https://anilist.co/user/you`',
       embeds: [],
-      components: [row(btn('ax:signup_again', '✏ Fix my sign-up', Style.PRIMARY))],
+      components: [row(
+        btn('ax:signup_again', '✏ Fix my sign-up', Style.PRIMARY),
+        // Escape hatch for lists that live elsewhere — kept as typed.
+        ...(rawLink ? [btn('ax:signup_force', '⚠ Proceed anyway', Style.DANGER)] : []),
+      )],
     });
   }
   answers[LINK_KEY] = link;
   await saveDraft(c, e.event_id, { step: 'A_DONE', partial_answers_json: JSON.stringify(answers) });
+  return reply(nextStep(items, answers));
+}
+
+/** After step 1 is stored: the Continue (2/2) prompt, or straight to summary. */
+function nextStep(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
   if (itemsB(items).length > 0) {
-    return reply({
+    return {
       content: `🔗 List saved — one more step for the remaining questions.`,
       embeds: [],
       components: [row(
         btn('ax:signup_cont', 'Continue (2/2)', Style.PRIMARY),
         btn('ax:signup_again', '✏ Back to step 1'),
       )],
-    });
+    };
   }
-  return reply(summaryCard(items, answers));
+  return summaryCard(items, answers);
+}
+
+/** [⚠ Proceed anyway] — keep the non-MAL/AniList link exactly as typed. */
+export async function signupForce(c: HCtx): Promise<Response> {
+  const e = c.event;
+  if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
+  const draft = await loadDraft(c, e.event_id);
+  const answers = parseJson<Record<string, string>>(draft?.partial_answers_json ?? null, {});
+  if (!draft || !(answers[LINK_KEY] ?? '').trim()) {
+    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.', embeds: [], components: [] });
+  }
+  const items = await getItems(c.env, e.event_id);
+  return respond.update(nextStep(items, answers));
 }
 
 /** [Continue (2/2)] → Modal B prefilled. */
@@ -242,11 +264,13 @@ export async function signupRestart(c: HCtx): Promise<Response> {
 }
 
 function summaryCard(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
+  const link = answers[LINK_KEY] ?? '—';
+  const offSite = link !== '—' && !normalizeListUrl(link) ? ' ⚠ *(not a MAL/AniList link)*' : '';
   return {
     content: 'Almost done — confirm your sign-up:',
     embeds: [embed({
       title: '📝 Your sign-up',
-      description: `**Your MAL/AniList:** ${answers[LINK_KEY] ?? '—'}\n*Your Secret Santa studies this to pick your anime.*`,
+      description: `**Your list:** ${link}${offSite}\n*Your Secret Santa studies this to pick your anime.*`,
       fields: items.map((it) => ({
         name: `${it.label}${it.visible_to_recommender ? ' 👁' : ' 🔒'}`,
         value: answers[String(it.item_id)] || '—',
@@ -266,12 +290,15 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups closed before you confirmed — sorry!');
   const draft = await loadDraft(c, e.event_id);
   const answers = parseJson<Record<string, string>>(draft?.partial_answers_json ?? null, {});
-  const link = normalizeListUrl(answers[LINK_KEY] ?? '');
+  const raw = (answers[LINK_KEY] ?? '').trim();
+  // An off-site link is only reachable via [⚠ Proceed anyway] — keep it as typed.
+  const link = normalizeListUrl(raw) ?? truncate(raw, 300);
   if (!draft || !link) {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up** to start again.', embeds: [], components: [] });
   }
   const itemAnswers = { ...answers };
   delete itemAnswers[LINK_KEY];
+  const username = sanitizeName(c.i.member?.user.username ?? '', 40);
   bg(c, async () => {
     const existing = await getSignup(c.env, e.event_id, c.userId);
     if (!existing) {
@@ -285,12 +312,13 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
       }
     }
     await c.env.DB.prepare(
-      `INSERT INTO signups (event_id, user_id, display_name, list_url, answers_json, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+      `INSERT INTO signups (event_id, user_id, display_name, username, list_url, answers_json, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
        ON CONFLICT(event_id, user_id) DO UPDATE SET
-         display_name = excluded.display_name, list_url = excluded.list_url,
+         display_name = excluded.display_name, username = excluded.username,
+         list_url = excluded.list_url,
          answers_json = excluded.answers_json, updated_at = excluded.updated_at`,
-    ).bind(e.event_id, c.userId, c.displayName, link, JSON.stringify(itemAnswers), now()).run();
+    ).bind(e.event_id, c.userId, c.displayName, username, link, JSON.stringify(itemAnswers), now()).run();
     await deleteDraft(c, e.event_id);
 
     let sheetNote = '';

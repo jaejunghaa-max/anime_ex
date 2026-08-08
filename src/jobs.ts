@@ -188,7 +188,10 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
       s.doc_url = docUrl(id);
       await env.DB.prepare('UPDATE signups SET doc_id = ?1, doc_url = ?2, updated_at = ?3 WHERE signup_id = ?4')
         .bind(id, s.doc_url, now(), s.signup_id).run();
-      await writeDocTemplate(env, guild, id, anime, s.display_name, deadlineText);
+      // "given to J(@j_handle)" — falls back to the display name alone for
+      // rows signed up before the username column existed.
+      const givenTo = s.username ? `${s.display_name}(@${s.username})` : s.display_name;
+      await writeDocTemplate(env, guild, id, anime, givenTo, deadlineText);
       const template = await driveExportText(env, guild, id);
       s.template_chars = template.length;
     }

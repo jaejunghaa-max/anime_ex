@@ -85,9 +85,7 @@ export function recoStatusCell(
     case 'PENDING':
       return '⏳ awaiting reply';
     case 'FINAL':
-      return s.reco_final_via === 'EXHAUSTED' ? '🔒 locked (declines used up)'
-        : s.reco_final_via === 'FORCED' ? '⏩ finalized by manager'
-        : '✅ approved';
+      return s.reco_final_via === 'FORCED' ? '⏩ locked at launch' : '✅ accepted';
     default:
       return s.declines_used > 0 ? `😞 declined ×${s.declines_used}` : '';
   }

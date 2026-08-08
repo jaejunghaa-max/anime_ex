@@ -1,7 +1,9 @@
 // RECOMMENDING-phase interactions (v3). Every Santa picks an anime for their
 // giftee (the previous row in the loop) through the MAL wizard; the giftee
-// answers Thank you!😊 (locks it) or Sorry😞 (sends it back, at most
-// events.max_declines times — after that the next pick locks automatically).
+// answers Thank you!😊 (accepts — reversible until Launch via the red
+// "No. I'll decline it.😞") or Sorry😞 (sends it back). Declining spends the
+// events.max_declines budget; a spent budget only removes the decline
+// buttons — nothing locks until Launch sweeps the still-pending picks.
 //
 // Buttons on thread cards carry the owner's user id (`ax:reco*:{uid}`) so a
 // moderator clicking inside someone else's private thread is rejected instead
@@ -83,9 +85,11 @@ function ownedBy(c: HCtx, ownerArg: string): Response | null {
 async function recoCtxOf(c: HCtx): Promise<RecoCtx | Response> {
   const e = c.event;
   if (!e || e.state !== 'RECOMMENDING') {
-    return stale(c, e && ['PREPARING'].includes(e.state)
-      ? 'Hold on — recommendation tasks are still being delivered.'
-      : 'The recommendation phase is not running.');
+    return stale(c, !e ? 'The recommendation phase is not running.'
+      : e.state === 'PREPARING' ? 'Hold on — recommendation tasks are still being delivered.'
+      : ['LAUNCHING', 'RUNNING', 'CLOSING', 'REVEALED'].includes(e.state)
+        ? 'The exchange has launched — picks are locked in.'
+        : 'The recommendation phase is not running.');
   }
   const { all, loops, indexOfUser } = await loopContext(c.env, e.event_id);
   const idx = indexOfUser(c.userId);
@@ -106,7 +110,7 @@ export async function recoOpen(c: HCtx, ownerArg: string): Promise<Response> {
   if (ctx instanceof Response) return ctx;
   const { e, giftee } = ctx;
   if (giftee.reco_status === 'FINAL') {
-    return respond.ephemeral({ content: `✅ Your pick for **${giftee.display_name}** is already locked in: **${giftee.reco_title}**. Mission complete!` });
+    return respond.ephemeral({ content: `✅ **${giftee.display_name}** accepted your pick: **${giftee.reco_title}**.` });
   }
   if (giftee.reco_status === 'PENDING') {
     return respond.ephemeral({ content: `⏳ You already sent **${giftee.reco_title}** to **${giftee.display_name}** — waiting for their reply.` });
@@ -216,9 +220,7 @@ export async function recoPick(c: HCtx): Promise<Response> {
       description: [
         chosen.title_en && chosen.title_en !== chosen.title ? chosen.title_en : null,
         `${chosen.type ?? '?'} · ${chosen.episodes ?? '?'} episodes · [MAL](${chosen.url})`,
-        left > 0
-          ? `They can send it back **${left}** more time(s).`
-          : `Their declines are used up — **this pick locks in immediately.**`,
+        left > 0 ? `They can send it back **${left}** more time(s).` : null,
       ].filter(Boolean).join('\n'),
       thumbnail: chosen.image ?? undefined,
     })],
@@ -259,21 +261,18 @@ export async function recoSend(c: HCtx): Promise<Response> {
     });
   }
   bg(c, async () => {
-    // Declines already exhausted → the pick locks in as it lands.
-    const autoFinal = giftee.declines_used >= e.max_declines;
     const res = await c.env.DB.prepare(
       `UPDATE signups SET reco_mal_id = ?1, reco_title = ?2, reco_title_en = ?3, reco_year = ?4,
          reco_type = ?5, reco_episodes = ?6, reco_url = ?7, reco_image = ?8,
-         reco_status = ?9, reco_final_via = ?10, updated_at = ?11
-       WHERE signup_id = ?12 AND reco_status = 'NONE'`,
+         reco_status = 'PENDING', reco_final_via = NULL, updated_at = ?9
+       WHERE signup_id = ?10 AND reco_status = 'NONE'`,
     ).bind(
       chosen.mal_id, chosen.title, chosen.title_en, chosen.year, chosen.type, chosen.episodes,
-      chosen.url, chosen.image, autoFinal ? 'FINAL' : 'PENDING', autoFinal ? 'EXHAUSTED' : null,
-      now(), giftee.signup_id,
+      chosen.url, chosen.image, now(), giftee.signup_id,
     ).run();
     if ((res.meta.changes ?? 0) === 0) {
       await editOriginal(c.env, c.i.token, {
-        content: `↻ **${giftee.display_name}** already has a pick ${giftee.reco_status === 'FINAL' ? 'locked in' : 'awaiting their reply'} — nothing sent.`,
+        content: `↻ **${giftee.display_name}** already has a pick ${giftee.reco_status === 'FINAL' ? 'accepted' : 'awaiting their reply'} — nothing sent.`,
         embeds: [], components: [],
       });
       return;
@@ -284,7 +283,7 @@ export async function recoSend(c: HCtx): Promise<Response> {
       reco_mal_id: chosen.mal_id, reco_title: chosen.title, reco_title_en: chosen.title_en,
       reco_year: chosen.year, reco_type: chosen.type, reco_episodes: chosen.episodes,
       reco_url: chosen.url, reco_image: chosen.image,
-      reco_status: autoFinal ? 'FINAL' : 'PENDING', reco_final_via: autoFinal ? 'EXHAUSTED' : null,
+      reco_status: 'PENDING', reco_final_via: null,
     };
     let deliveryNote = '';
     if (fresh.thread_id) {
@@ -299,12 +298,11 @@ export async function recoSend(c: HCtx): Promise<Response> {
     await writeRecoCells(c.env, c.guild, e, items, fresh).catch((err) => {
       console.error('reco cells write failed (heals at launch)', err);
     });
-    await maybeMilestoneRepaint(c, e);
+    await maybeMilestoneRepaint(c, e, 'send');
     await editOriginal(c.env, c.i.token, {
       content:
         `📨 Sent **${animeLabel(chosen)}** to **${giftee.display_name}**! ` +
-        (autoFinal ? 'Their declines were used up, so it **locked in immediately** 🔒' : 'You\'ll get a ping in your thread when they reply.') +
-        deliveryNote,
+        `You'll get a ping in your thread when they reply.` + deliveryNote,
       embeds: [], components: [],
     });
   });
@@ -341,21 +339,24 @@ export async function recoApprove(c: HCtx, ownerArg: string): Promise<Response> 
     }
     const items = await getItems(c.env, e.event_id);
     await writeRecoCells(c.env, c.guild, e, items, fresh).catch(() => {});
-    await maybeMilestoneRepaint(c, e);
+    await maybeMilestoneRepaint(c, e, 'approve');
   });
   return respond.deferUpdate();
 }
 
-/** [Sorry😞] — sends the pick back, if the decline budget allows. */
+/**
+ * [Sorry😞] on a pending pick, or [No. I'll decline it.😞] on an accepted one
+ * — Thank you is reversible until Launch. Either way it consumes one decline
+ * from the budget and sends the Santa back to picking.
+ */
 export async function recoDecline(c: HCtx, ownerArg: string): Promise<Response> {
   const owned = ownedBy(c, ownerArg);
   if (owned) return owned;
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
   const { e, me, santa } = ctx;
-  if (me.reco_status === 'PENDING' && me.declines_used >= e.max_declines) {
-    // Shouldn't happen (exhausted sends auto-lock), but guard anyway.
-    return respond.ephemeral({ content: '🔒 You\'ve used all your declines — this pick is locked in.' });
+  if (me.declines_used >= e.max_declines) {
+    return respond.ephemeral({ content: '🔒 You have no Sorry😞s left — you can\'t send this one back.' });
   }
   bg(c, async () => {
     const declinedTitle = me.reco_title ?? '?';
@@ -363,12 +364,17 @@ export async function recoDecline(c: HCtx, ownerArg: string): Promise<Response> 
       ...declinedOf(me),
       ...(me.reco_mal_id !== null ? [{ mal_id: me.reco_mal_id, title: declinedTitle }] : []),
     ]);
+    // The state subquery closes the launch race: once the event leaves
+    // RECOMMENDING, no decline can land (an accepted pick is final by then).
     const res = await c.env.DB.prepare(
       `UPDATE signups SET reco_status = 'NONE', declines_used = declines_used + 1, reco_declined_json = ?1,
          reco_mal_id = NULL, reco_title = NULL, reco_title_en = NULL, reco_year = NULL,
          reco_type = NULL, reco_episodes = NULL, reco_url = NULL, reco_image = NULL,
          reco_final_via = NULL, updated_at = ?2
-       WHERE signup_id = ?3 AND reco_status = 'PENDING' AND declines_used < ?4`,
+       WHERE signup_id = ?3
+         AND (reco_status = 'PENDING' OR (reco_status = 'FINAL' AND reco_final_via = 'APPROVED'))
+         AND declines_used < ?4
+         AND (SELECT state FROM events WHERE events.event_id = signups.event_id) = 'RECOMMENDING'`,
     ).bind(newDeclined, now(), me.signup_id, e.max_declines).run();
     if ((res.meta.changes ?? 0) === 0) {
       // Lost a race (double-click / force-finalize) — show the fresh truth.
@@ -390,7 +396,7 @@ export async function recoDecline(c: HCtx, ownerArg: string): Promise<Response> 
           `Your Secret Santa is choosing another pick — you'll get a ping when it arrives.\n` +
           (left > 0
             ? `You can decline **${left}** more time(s).`
-            : `That was your last decline — **the next pick locks in automatically.**`),
+            : `That was your last Sorry😞 — you won't be able to send the next one back.`),
       })],
       components: [],
     }).catch(() => {});
@@ -406,43 +412,55 @@ export async function recoDecline(c: HCtx, ownerArg: string): Promise<Response> 
   return respond.deferUpdate();
 }
 
-/** Repaint immediately when the last pick locks (Launch turns green);
- *  otherwise throttled like the signup counter. */
-async function maybeMilestoneRepaint(c: HCtx, e: EventRow): Promise<void> {
-  const left = await c.env.DB
-    .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
-    .bind(e.event_id).first<{ n: number }>();
-  if ((left?.n ?? 0) === 0) await repaint(c);
+/** Repaint immediately at true milestones — the last Santa sending their pick
+ *  (Launch turns green) or the last pick being accepted — and throttled like
+ *  the signup counter otherwise. */
+async function maybeMilestoneRepaint(c: HCtx, e: EventRow, kind: 'send' | 'approve'): Promise<void> {
+  const agg = await c.env.DB.prepare(
+    `SELECT COUNT(*) AS n,
+            COALESCE(SUM(CASE WHEN reco_status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting,
+            COALESCE(SUM(CASE WHEN reco_status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final
+     FROM signups WHERE event_id = ?1`,
+  ).bind(e.event_id).first<{ n: number; waiting: number; final: number }>();
+  const milestone = kind === 'send'
+    ? (agg?.waiting ?? 1) === 0
+    : (agg?.final ?? 0) === (agg?.n ?? -1);
+  if (milestone) await repaint(c);
   else await throttledCountRepaint(c, e.event_id);
 }
 
 // ---------------------------------------------------------------- My Status
 
 function statusPayload(e: EventRow, me: SignupRow, giftee: SignupRow): Record<string, unknown> {
+  const left = Math.max(0, e.max_declines - me.declines_used);
+  const accepted = me.reco_status === 'FINAL' && me.reco_final_via === 'APPROVED';
   const mission = giftee.signup_id === me.signup_id
     ? null
     : giftee.reco_status === 'FINAL'
-      ? `✅ Locked in: **${giftee.reco_title}** for **${giftee.display_name}** — mission complete!`
+      ? `✅ **${giftee.display_name}** accepted your pick: **${giftee.reco_title}**.`
       : giftee.reco_status === 'PENDING'
         ? `⏳ You sent **${giftee.reco_title}** to **${giftee.display_name}** — waiting for their reply.`
         : `🎯 **${giftee.display_name}** is waiting for your pick${giftee.declines_used > 0 ? ` (they've sent ${giftee.declines_used} back so far)` : ''}.\n` +
           `Their list: ${giftee.list_url || '*not provided*'}`;
-  const incoming = me.reco_status === 'FINAL'
-    ? `✅ Your anime is locked in: **${me.reco_title}**.`
-    : me.reco_status === 'PENDING'
-      ? `📬 **${me.reco_title}** is waiting for your reply!`
-      : `🎁 Your Secret Santa is still choosing${me.declines_used > 0 ? ` (you've sent ${me.declines_used} pick(s) back)` : ''}…`;
+  const incoming = accepted
+    ? `✅ You accepted **${me.reco_title}**.${left > 0 ? ' You can still change your mind until the launch.' : ''}`
+    : me.reco_status === 'FINAL'
+      ? `✅ Your anime: **${me.reco_title}**.`
+      : me.reco_status === 'PENDING'
+        ? `📬 **${me.reco_title}** is waiting for your reply!`
+        : `🎁 Your Secret Santa is still choosing${me.declines_used > 0 ? ` (you've sent ${me.declines_used} pick(s) back)` : ''}…`;
   const buttons: unknown[] = [];
   if (mission && giftee.reco_status === 'NONE') {
     buttons.push(btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
   }
   if (me.reco_status === 'PENDING') {
-    buttons.push(
-      btn(`ax:reco_ok:${me.user_id}`, 'Thank you!😊', Style.SUCCESS),
-      btn(`ax:reco_no:${me.user_id}`, 'Sorry😞', Style.DANGER),
-    );
+    buttons.push(btn(`ax:reco_ok:${me.user_id}`, 'Thank you!😊', Style.SUCCESS));
+    if (left > 0) buttons.push(btn(`ax:reco_no:${me.user_id}`, 'Sorry😞', Style.DANGER));
   }
-  if (me.reco_status === 'PENDING' && me.reco_url) {
+  if (accepted && left > 0) {
+    buttons.push(btn(`ax:reco_no:${me.user_id}`, "No. I'll decline it.😞", Style.DANGER));
+  }
+  if ((me.reco_status === 'PENDING' || accepted) && me.reco_url) {
     buttons.push(linkBtn(me.reco_url, '🔗 View on MAL'));
   }
   return {
@@ -452,9 +470,7 @@ function statusPayload(e: EventRow, me: SignupRow, giftee: SignupRow): Record<st
       description: [
         mission ? `**Your mission**\n${mission}` : null,
         `**Your anime**\n${incoming}`,
-        me.reco_status !== 'FINAL'
-          ? `*(You can decline **${Math.max(0, e.max_declines - me.declines_used)}** more time(s).)*`
-          : null,
+        `*(Sorry😞s left: **${left}**.)*`,
       ].filter(Boolean).join('\n\n'),
     })],
     components: buttons.length ? [row(...buttons)] : [],

@@ -32,7 +32,8 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 ```
 
 - **Signup**: no anime search anymore. The form's built-in item is
-  **"Link of your MAL/AniList"** (validated; `myanimelist.net` / `anilist.co`),
+  **"Link of your MAL/AniList"** (validated; `myanimelist.net` / `anilist.co`,
+  with a red **⚠ Proceed anyway** escape hatch for lists hosted elsewhere),
   plus up to 9 custom items.
 - **Matching** (unchanged tools): 🧩 Grouping, 🔀 Shuffle, manual row-reorder +
   Group column in the sheet, ✅ Validate. Instead of Launch, the manager presses
@@ -42,15 +43,19 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
   list link + 👁-visible answers, and a **🎯 Recommend an anime** button.
 - **Recommending** (new): the Santa picks via the MAL search wizard (EN/JP
   re-ranking, same engine as v2's signup search). The giftee's thread gets the
-  pick with **[Thank you!😊]** (locks it) / **[Sorry😞]** (sends it back; a
-  declined title can't be re-picked). Each person's decline budget
-  (**0–9, set in Set Basics at drafting**) is enforced — once used up, the next
-  pick locks automatically. Manager tools: 📊 View Status, 📣 Remind Now,
-  ⏩ Force-finalize (locks pending picks), ↩ Back to Matching (wipes picks,
+  pick with **[Thank you!😊]** / **[Sorry😞]**. Accepting is reversible — a red
+  **[No. I'll decline it.😞]** stays on the card until Launch. Declining
+  (before or after accepting) spends the per-person budget (**0–9, set in Set
+  Basics at drafting**); a declined title can't be re-picked, and a spent
+  budget just removes the decline buttons — nothing locks mid-phase. Manager
+  tools: 📊 View Status, 📣 Remind Now, ↩ Back to Matching (wipes picks,
   keeps threads).
-- **Launch onward**: identical to v2, except review docs are created for the
-  *locked-in* pick, the assignment card lands in the already-existing thread,
-  and the reveal/gallery show who picked for whom.
+- **Launch onward**: identical to v2, except Launch refuses only while a Santa
+  hasn't sent a pick, locks any still-pending picks itself (after a bold
+  **‼️The pending picks will be locked** warning), creates review docs for the
+  final picks, posts the assignment card into the already-existing thread, and
+  the reveal/gallery show who picked for whom. Closing always posts the
+  gallery.
 
 ## Architecture
 
@@ -116,6 +121,7 @@ npm run deploy
 > `events`/`signups`/`jobs` tables for the new flow. Rows survive, but v2
 > signup-time anime picks are dropped (v3 has no such pick) — **finish or
 > 🛑 Abort any in-flight event before running `npm run migrate`**, then deploy.
+> `0005` is additive (username column + normalizing pre-3.1 lock states).
 
 ### 3. Google Cloud OAuth client
 
@@ -172,28 +178,33 @@ Everything happens on the two pinned panels:
    - **🎯 Start Recommending** validates once more, **locks the assignment**,
      and runs the batched prepare job: one private thread + Santa mission card
      per participant (~`JOB_BATCH`/min).
-4. **RECOMMENDING**: Santas pick via the MAL wizard; giftees approve
-   (**Thank you!😊**) or decline (**Sorry😞**, at most the drafted budget;
-   declined titles can't be re-picked; an exhausted budget makes the next pick
-   lock instantly). The sheet's **Recommendation / Rec. Status** columns update
-   live; the panel shows `locked / pending / waiting` counts. Manager levers:
-   **📣 Remind Now** (nudges Santas who owe a pick + giftees who owe a reply),
-   **⏩ Force-finalize** (locks all ⏳ pending picks), **↩ Back to Matching**
-   (wipes all picks; threads are reused later), and **🚀 Launch** — which
-   refuses until every pick is FINAL.
-5. Launch runs as a batched job: per participant a review doc for their
-   locked-in anime (`Review of {Anime} by {name}`, anyone-with-link
-   **editor**), an assignment card in their existing thread with the doc link
-   plus a **⭐ Score it /10** button. The panel counts up and flips to RUNNING
-   by itself.
-6. During RUNNING: wrote-detection every 30 minutes and on every **View Event**
-   click (chars written beyond the doc template; the sheet shows a **Review
-   Length** column), progress panel, scheduled reminders (thread ping, optional
-   DM mirror), **Remind Now** for laggards, scoring out of 10 until Close.
-7. **Close Reviews** (with or without a public gallery): final status sync, all
-   docs flip to anyone-with-link **viewer** *before* any reveal link is posted,
-   then reveal cards — "your Secret Santa was X, they picked Y for you" —
-   (+ optional gallery with one line per participant, per loop).
+4. **RECOMMENDING**: Santas pick via the MAL wizard; giftees accept
+   (**Thank you!😊** — reversible via the red **No. I'll decline it.😞** until
+   Launch) or decline (**Sorry😞**, at most the drafted budget; declined
+   titles can't be re-picked; a spent budget removes the decline buttons).
+   The sheet's **Recommendation / Rec. Status** columns update live; the panel
+   shows `accepted / pending / waiting` counts. Manager levers: **📣 Remind
+   Now** (nudges Santas who owe a pick + giftees who owe a reply) and
+   **↩ Back to Matching** (wipes all picks; threads are reused later).
+   **🚀 Launch** refuses only while some Santa hasn't sent a pick; ⏳ pending
+   picks are locked by the launch itself after a bold
+   **‼️The pending picks will be locked** warning.
+5. Launch runs as a batched job: per participant a review doc for their final
+   anime (`Review of {Anime} by {name}`, header "given to
+   `Display(@username)`", anyone-with-link **editor**), and an assignment card
+   in their existing thread — their own pick recap (giftee + list link) on
+   top, their anime below, doc link + **⭐ Score it /10** buttons last. The
+   panel counts up and flips to RUNNING by itself.
+6. During RUNNING: wrote-detection every 30 minutes and on every **🔄 Refresh**
+   click (chars written beyond the doc template; the sheet — linked from the
+   panel at all times — shows a **Review Length** column), progress panel,
+   scheduled reminders (thread ping, optional DM mirror), **Remind Now** for
+   laggards, scoring out of 10 until Close.
+7. **Close Reviews**: one confirm — final status sync, all docs flip to
+   anyone-with-link **viewer** *before* any reveal link is posted, then reveal
+   cards — "your Secret Santa was X, they picked Y for you"; unscored reviews
+   read "didn't score your pick" — plus the public gallery (always posted),
+   one line per participant, per loop.
 8. **Finish**: deletes threads and the bot's event data. **The sheet and docs
    stay in the manager's Drive** — nothing to export.
 
@@ -225,7 +236,8 @@ Everything happens on the two pinned panels:
 - **Left-server participants:** the row is kept and the loop stays intact. If a
   vanished Santa never picks, the manager's levers are 📣 Remind, ↩ Back to
   Matching (regroup without them after removing their row via Validate), or
-  waiting them out; ⏩ Force-finalize covers giftees who never reply.
+  waiting them out; giftees who never reply are covered by the launch sweep
+  (pending picks lock at Launch).
 - Refresh tokens are AES-GCM encrypted at rest (`TOKEN_ENC_KEY`); OAuth `state`
   is random with a 10-minute TTL; every manager action is role-checked
   server-side.

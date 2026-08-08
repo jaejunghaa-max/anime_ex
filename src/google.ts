@@ -163,12 +163,13 @@ export async function createDoc(env: Env, guild: GuildRow, title: string): Promi
   return res.documentId;
 }
 
-/** Write the small review template (§7.5): H1 title + context line + divider. */
+/** Write the small review template (§7.5): H1 title + context line + divider.
+ *  `givenTo` arrives preformatted, e.g. `J(@j_handle)`. */
 export async function writeDocTemplate(
-  env: Env, guild: GuildRow, docId: string, animeTitle: string, reviewerName: string, deadlineText: string,
+  env: Env, guild: GuildRow, docId: string, animeTitle: string, givenTo: string, deadlineText: string,
 ): Promise<void> {
   const heading = `Review of ${animeTitle}\n`;
-  const body = `given to @${reviewerName} — deadline ${deadlineText}\n————————————————\n\n`;
+  const body = `given to ${givenTo} — deadline ${deadlineText}\n————————————————\n\n`;
   await gapi(env, guild, 'POST', `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
     requests: [
       { insertText: { location: { index: 1 }, text: heading + body } },

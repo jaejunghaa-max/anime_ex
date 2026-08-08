@@ -213,9 +213,8 @@ describe('sheet layout (§8.3)', () => {
     expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 0 })).toBe('');
     expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 2 })).toBe('😞 declined ×2');
     expect(recoStatusCell({ reco_status: 'PENDING', reco_final_via: null, declines_used: 0 })).toBe('⏳ awaiting reply');
-    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'APPROVED', declines_used: 1 })).toBe('✅ approved');
-    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'EXHAUSTED', declines_used: 2 })).toBe('🔒 locked (declines used up)');
-    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'FORCED', declines_used: 0 })).toBe('⏩ finalized by manager');
+    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'APPROVED', declines_used: 1 })).toBe('✅ accepted');
+    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'FORCED', declines_used: 0 })).toBe('⏩ locked at launch');
   });
 });
 

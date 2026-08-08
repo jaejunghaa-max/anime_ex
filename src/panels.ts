@@ -124,11 +124,13 @@ export function renderManagerPanel(
 
   switch (e.state) {
     case 'DRAFTING': {
-      const itemLines = items.length
-        ? items.map((it, i) =>
-            `${i + 1}. ${it.label} — ${it.type === 'MCQ' ? `MCQ (${it.optionCount} options)` : 'fill-in'} — ${it.visible ? '👁 visible to your recommender' : '🔒 hidden'}`,
-          ).join('\n')
-        : '*no custom items yet*';
+      // The built-in list link is item 1; custom items number from 2.
+      const itemLines = [
+        '1. Link of your MAL/AniList — built-in — 👁 always visible to their Secret Santa',
+        ...items.map((it, i) =>
+          `${i + 2}. ${it.label} — ${it.type === 'MCQ' ? `MCQ (${it.optionCount} options)` : 'fill-in'} — ${it.visible ? '👁 visible to your recommender' : '🔒 hidden'}`,
+        ),
+      ].join('\n');
       const deadline = e.signup_deadline
         ? `${ts(e.signup_deadline)} (${ts(e.signup_deadline, 'R')})`
         : '*not set*';
@@ -141,7 +143,7 @@ export function renderManagerPanel(
             `**Sign-up deadline:** ${deadline}\n` +
             `**Timezone:** ${e.tz ?? '*not set*'} · **Auto-stop:** ${e.auto_stop ? 'on' : 'off'}\n` +
             `**Sorry😞 budget:** each person can decline **${e.max_declines}** recommendation(s)\n` +
-            `${googleLine(guild)}\n\n**Sign-up form** — built-in: *Link of your MAL/AniList* · custom items (max 9):\n${itemLines}`,
+            `${googleLine(guild)}\n\n**Sign-up form** (up to 9 custom items):\n${itemLines}`,
         })],
         components: [
           row(
@@ -168,11 +170,12 @@ export function renderManagerPanel(
             `${e.auto_stop ? ' · auto-stop **on**' : ''}\n` +
             `**${stats.count}** signed up\n${googleLine(guild)}`,
         })],
-        components: [row(
+        components: [row(...[
+          sheetBtn,
           btn('ax:view_signups', '📋 View Sign-Ups'),
           btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
           abortBtn(),
-        )],
+        ].filter(Boolean) as unknown[])],
       };
     case 'MATCHING': {
       // Loops summary as of the last adoption into D1 (rev. 3 §5.4).
@@ -215,17 +218,20 @@ export function renderManagerPanel(
     }
     case 'RECOMMENDING': {
       const waiting = Math.max(0, stats.count - stats.recoFinal - stats.recoPending);
-      const ready = stats.recoFinal === stats.count && stats.count > 0;
+      const ready = waiting === 0 && stats.count > 0; // every Santa has sent a pick
+      const statusLine = waiting > 0
+        ? `🚀 Launch unlocks once every Santa has sent a pick — 📣 nudge the stragglers.`
+        : stats.recoPending > 0
+          ? `**‼️The pending picks will be locked** when you 🚀 Launch.`
+          : `✅ **Every pick is accepted — ready to 🚀 Launch.**`;
       return {
         content: '',
         embeds: [embed({
           title: `🎯 Recommending — ${e.topic}`,
           description:
-            `**${stats.recoFinal} / ${stats.count}** picks locked in · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
-            `Each person may send a pick back **${e.max_declines}** time(s); after that the next pick locks automatically.\n` +
-            (ready
-              ? `✅ **Everyone's pick is locked in — ready to 🚀 Launch.**`
-              : `Launch unlocks once every pick is locked. **⏩ Force-finalize** locks the ⏳ pending ones; 📣 nudges the stragglers.`) +
+            `**${stats.recoFinal} / ${stats.count}** picks accepted · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
+            `Each person may send a pick back **${e.max_declines}** time(s) — and accepted picks stay changeable until Launch.\n` +
+            statusLine +
             `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [
@@ -235,7 +241,6 @@ export function renderManagerPanel(
             btn('ax:remind', '📣 Remind Now'),
           ].filter(Boolean) as unknown[]),
           row(
-            btn('ax:force_final', '⏩ Force-finalize'),
             btn('ax:back_matching', '↩ Back to Matching'),
             btn('ax:launch', '🚀 Launch', ready ? Style.SUCCESS : Style.SECONDARY),
             abortBtn(),
@@ -268,12 +273,13 @@ export function renderManagerPanel(
             `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
-        components: [row(
-          btn('ax:view_event', '📊 View Event'),
+        components: [row(...[
+          sheetBtn,
+          btn('ax:refresh', '🔄 Refresh'),
           btn('ax:remind', '📣 Remind Now'),
           btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
           abortBtn(),
-        )],
+        ].filter(Boolean) as unknown[])],
       };
     }
     case 'CLOSING': {
@@ -381,8 +387,8 @@ export function renderParticipantPanel(
           title: `${title} — ${e.topic}`,
           description:
             `🎯 **Recommendation time!** Check your private thread: pick an anime for your person, and answer the pick you receive with **Thank you!😊** or **Sorry😞**` +
-            `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''})` : ''}.\n` +
-            `**${stats.recoFinal} / ${stats.count}** picks locked in — the exchange launches when everyone's is.`,
+            `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''}, even after accepting — until launch)` : ''}.\n` +
+            `**${stats.recoFinal} / ${stats.count}** picks accepted so far.`,
         })],
         components: [row(btn('ax:reco_me', '🎯 My Status', Style.PRIMARY))],
       };

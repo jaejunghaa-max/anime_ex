@@ -40,8 +40,8 @@ export function taskCard(
   const visibleLines = visibleAnswerLines(giftee, items);
   const listUrl = safeUrl(giftee.list_url);
   const budget = event.max_declines === 0
-    ? 'They **cannot** send it back — your first pick is final, so make it count.'
-    : `They can send a pick back up to **${event.max_declines}** time(s) with Sorry😞 — after that, your next pick locks in automatically.`;
+    ? 'They can\'t send picks back — study that list and make it count.'
+    : `They can send a pick back up to **${event.max_declines}** time(s) with Sorry😞 — study that list and make it count.`;
   return {
     content: `<@${me.user_id}> your secret mission is here! 🎯`,
     embeds: [embed({
@@ -60,20 +60,34 @@ export function taskCard(
 }
 
 /**
- * Posted in the GIFTEE's thread on every send. When the pick is still PENDING
- * it carries the Thank you!/Sorry buttons; when the send exhausted the decline
- * budget (auto-FINAL) it is informational.
+ * Posted in the GIFTEE's thread on every send, and re-rendered in place when
+ * they answer. PENDING carries Thank you! (+ Sorry, while the budget lasts);
+ * an accepted pick keeps a red "No. I'll decline it.😞" until Launch — Thank
+ * you is not an irreversible lock. Only the launch sweep (FORCED) is final.
  */
 export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unknown> {
   const left = Math.max(0, event.max_declines - giftee.declines_used);
   const pending = giftee.reco_status === 'PENDING';
-  const choiceLine = pending
-    ? `**Thank you!😊** locks it in · **Sorry😞** sends it back — you can do that **${left}** more time(s).`
-    : giftee.reco_final_via === 'APPROVED'
-      ? `You said **Thank you!😊** — it's locked in. Enjoy! 🍿`
-      : giftee.reco_final_via === 'FORCED'
-        ? `Locked in by the event manager. Enjoy! 🍿`
-        : `You've used all your declines — this one is locked in. Enjoy! 🍿`;
+  const accepted = giftee.reco_status === 'FINAL' && giftee.reco_final_via === 'APPROVED';
+  let choiceLine: string;
+  let buttons: unknown[] = [];
+  if (pending) {
+    choiceLine = left > 0
+      ? `**Thank you!😊** accepts it · **Sorry😞** sends it back — you can do that **${left}** more time(s).`
+      : `**Thank you!😊** accepts it. *(You have no Sorry😞s left.)*`;
+    buttons = [
+      btn(`ax:reco_ok:${giftee.user_id}`, 'Thank you!😊', Style.SUCCESS),
+      ...(left > 0 ? [btn(`ax:reco_no:${giftee.user_id}`, 'Sorry😞', Style.DANGER)] : []),
+    ];
+  } else if (accepted) {
+    choiceLine = `You said **Thank you!😊** — enjoy! 🍿` +
+      (left > 0 ? `\nChanged your mind? You can still decline it until the launch.` : '');
+    buttons = left > 0
+      ? [btn(`ax:reco_no:${giftee.user_id}`, "No. I'll decline it.😞", Style.DANGER)]
+      : [];
+  } else {
+    choiceLine = `Locked in at launch. Enjoy! 🍿`;
+  }
   return {
     content: `<@${giftee.user_id}> your Secret Santa picked something for you! 🎁`,
     embeds: [embed({
@@ -84,12 +98,7 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
         `Chosen just for you — *who picked it stays secret until the reveal.*\n\n${choiceLine}`,
       image: giftee.reco_image ?? undefined,
     })],
-    components: pending
-      ? [row(
-          btn(`ax:reco_ok:${giftee.user_id}`, 'Thank you!😊', Style.SUCCESS),
-          btn(`ax:reco_no:${giftee.user_id}`, 'Sorry😞', Style.DANGER),
-        )]
-      : [],
+    components: buttons.length ? [row(...buttons)] : [],
   };
 }
 
@@ -97,37 +106,29 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
 export function declineNotice(
   event: EventRow, santa: SignupRow, giftee: SignupRow, declinedTitle: string,
 ): Record<string, unknown> {
-  const left = Math.max(0, event.max_declines - giftee.declines_used);
   const already = declinedOf(giftee).map((d) => d.title);
   return {
     content: `<@${santa.user_id}> 😞 **${giftee.display_name}** sent your pick back — round ${giftee.declines_used + 1}!`,
     embeds: [embed({
       description:
-        `**${declinedTitle}** was declined (${giftee.declines_used}/${event.max_declines} declines used).\n` +
-        (already.length ? `Already declined: ${already.map((t) => `**${t}**`).join(', ')}\n` : '') +
-        (left > 0
-          ? `They can still send **${left}** more pick(s) back.`
-          : `Their declines are used up — **your next pick locks in automatically.**`),
+        `**${declinedTitle}** was declined (${giftee.declines_used}/${event.max_declines} Sorry😞s used).` +
+        (already.length ? `\nAlready declined: ${already.map((t) => `**${t}**`).join(', ')}` : ''),
     })],
     components: [row(btn(`ax:reco:${santa.user_id}`, '🎯 Recommend another', Style.PRIMARY))],
   };
 }
 
-/** Posted in the SANTA's thread when their pick is approved (or auto-locked). */
+/** Posted in the SANTA's thread when their pick is accepted. */
 export function lockedNotice(santa: SignupRow, giftee: SignupRow): Record<string, unknown> {
-  const how = giftee.reco_final_via === 'APPROVED'
-    ? `said **Thank you!😊** to`
-    : giftee.reco_final_via === 'FORCED' ? 'had the manager lock in' : 'is now locked in with';
   return {
-    content:
-      `<@${santa.user_id}> 🎉 **${giftee.display_name}** ${how} **${giftee.reco_title}** — ` +
-      `your mission is complete. The exchange launches once everyone's pick is locked.`,
+    content: `<@${santa.user_id}> 🎉 **${giftee.display_name}** said **Thank you!😊** to **${giftee.reco_title}**.`,
   };
 }
 
 /**
- * Posted in each thread by the launch job: the locked-in anime + review doc +
- * deadline, plus a recap of what this participant picked for their giftee.
+ * Posted in each thread by the launch job: the recap of what this participant
+ * picked (top), then their own locked-in anime + review doc + deadline, with
+ * the buttons last.
  */
 export function assignmentCard(
   event: EventRow, me: SignupRow, myGiftee: SignupRow,
@@ -136,6 +137,12 @@ export function assignmentCard(
   return {
     content: `<@${me.user_id}> the exchange is on — happy watching! 🎬`,
     embeds: [
+      embed({
+        title: `🎁 Your pick: ${myGiftee.reco_title}`,
+        description:
+          `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) will be reviewing it.\n` +
+          `MAL/AniList: ${myGiftee.list_url || '—'}`,
+      }),
       embed({
         title: `🎬 Your anime: ${me.reco_title}${me.reco_year ? ` (${me.reco_year})` : ''}`,
         url: me.reco_url ?? undefined,
@@ -148,10 +155,6 @@ export function assignmentCard(
           name: '⏰ Review deadline',
           value: `${ts(deadline)} (${ts(deadline, 'R')})`,
         }],
-      }),
-      embed({
-        title: `🎁 Your pick: ${myGiftee.reco_title}`,
-        description: `You chose it for **${myGiftee.display_name}** (<@${myGiftee.user_id}>) — they'll be reviewing it too.`,
       }),
     ],
     components: [row(...[
@@ -168,7 +171,7 @@ export function revealCard(
   const reviewTitle = `Review of ${myGiftee.reco_title} by ${myGiftee.display_name}`;
   const verdict = myGiftee.score !== null
     ? `gave your pick **${myGiftee.reco_title}** **⭐ ${myGiftee.score} stars**`
-    : `reviewed your pick **${myGiftee.reco_title}**`;
+    : `didn't score your pick **${myGiftee.reco_title}**`;
   return {
     content: `<@${me.user_id}> the reveal is here! 🎭`,
     embeds: [embed({

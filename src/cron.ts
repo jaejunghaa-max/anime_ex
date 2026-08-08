@@ -19,7 +19,7 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
     await deadlineChecks(env, cfg).catch((e) => console.error('deadline checks', e));
   }
   if (minute % 30 === 0) {
-    // Wrote-detection every 30 min; View Event clicks enqueue on demand.
+    // Wrote-detection every 30 min; 🔄 Refresh clicks enqueue on demand.
     await enqueuePeriodicSyncs(env).catch((e) => console.error('sync enqueue', e));
   }
 
@@ -110,6 +110,7 @@ interface DueReminder {
   state: 'RECOMMENDING' | 'RUNNING';
   review_deadline: number | null;
   dm_mirror: number;
+  max_declines: number;
   thread_id: string | null;
   dm_channel_id: string | null;
   signup_id: number;
@@ -132,7 +133,7 @@ interface DueReminder {
 async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
   const due = await env.DB.prepare(
     `SELECT r.id, r.event_id, r.user_id, r.kind, r.due_at,
-            e.guild_id, e.state, e.review_deadline, e.dm_mirror,
+            e.guild_id, e.state, e.review_deadline, e.dm_mirror, e.max_declines,
             s.thread_id, s.dm_channel_id, s.signup_id, s.row_order, s.wrote,
             s.doc_url, s.reco_title, s.reco_status, s.declines_used
      FROM reminders r
@@ -183,11 +184,10 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         buttons.push(btn(`ax:reco:${r.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
       }
       if (needsReply) {
-        parts.push(`🎁 **${r.reco_title}** is waiting for your reply — Thank you!😊 locks it in, Sorry😞 sends it back.`);
-        buttons.push(
-          btn(`ax:reco_ok:${r.user_id}`, 'Thank you!😊', Style.SUCCESS),
-          btn(`ax:reco_no:${r.user_id}`, 'Sorry😞', Style.DANGER),
-        );
+        const canDecline = r.declines_used < r.max_declines;
+        parts.push(`🎁 **${r.reco_title}** is waiting for your reply — **Thank you!😊** accepts it${canDecline ? ', **Sorry😞** sends it back' : ''}.`);
+        buttons.push(btn(`ax:reco_ok:${r.user_id}`, 'Thank you!😊', Style.SUCCESS));
+        if (canDecline) buttons.push(btn(`ax:reco_no:${r.user_id}`, 'Sorry😞', Style.DANGER));
       }
       text = `📣 A nudge from your event manager:\n${parts.join('\n')}`;
       components = [row(...buttons)];

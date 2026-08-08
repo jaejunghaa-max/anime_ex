@@ -14,7 +14,7 @@ import * as su from './signup';
 
 // Actions any member may use; everything else under ax:/axm: is manager-only (§13.2).
 const PARTICIPANT_ACTIONS = new Set([
-  'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart',
+  'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart', 'signup_force',
   'edit_signup', 'withdraw', 'score', 'cancel',
   'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no', 'reco_me',
 ]);
@@ -112,16 +112,15 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'reco_start': return arg === 'go' ? mgr.recoStartGo(c) : mgr.recoStart(c);
     // RECOMMENDING (manager)
     case 'reco_view': return mgr.recoView(c);
-    case 'force_final': return arg === 'go' ? mgr.forceFinalGo(c) : mgr.forceFinal(c);
     case 'back_matching': return arg === 'go' ? mgr.backMatchingGo(c) : mgr.backMatching(c);
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
     // RUNNING / RECOMMENDING (manager)
-    case 'view_event': return mgr.viewEvent(c);
+    case 'refresh':
+    case 'view_event': // pre-3.1 panels
+      return mgr.refreshStatus(c);
     case 'remind': return arg === 'go' ? mgr.remindNowGo(c) : mgr.remindNow(c);
     case 'close':
-      if (arg === 'gallery') return mgr.closeGo(c, true);
-      if (arg === 'quiet') return mgr.closeGo(c, false);
-      return mgr.closeReviews(c);
+      return arg === 'gallery' ? mgr.closeGo(c) : mgr.closeReviews(c);
     // REVEALED (manager)
     case 'finish': return arg === 'go' ? mgr.finishGo(c) : mgr.finish(c);
     // any non-IDLE state (manager)
@@ -132,6 +131,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_cont': return su.signupContinue(c);
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
+    case 'signup_force': return su.signupForce(c);
     case 'signup_confirm': return su.signupConfirm(c);
     case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);

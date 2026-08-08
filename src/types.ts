@@ -95,13 +95,17 @@ export interface FormItem {
 }
 
 export type RecoStatus = 'NONE' | 'PENDING' | 'FINAL';
-export type RecoFinalVia = 'APPROVED' | 'EXHAUSTED' | 'FORCED';
+/** APPROVED = the giftee said Thank you (reversible until Launch);
+ *  FORCED = still pending at Launch, locked by the launch sweep. */
+export type RecoFinalVia = 'APPROVED' | 'FORCED';
 
 export interface SignupRow {
   signup_id: number;
   event_id: number;
   user_id: string;
   display_name: string;
+  /** Discord handle, for the review-doc "given to Display(@username)" line. */
+  username: string;
   /** v3 built-in form item: link to the participant's MAL/AniList list. */
   list_url: string;
   answers_json: string;

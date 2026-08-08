@@ -218,7 +218,7 @@ export function displayNameOf(member: { nick?: string | null; user: { global_nam
   return sanitizeName(member.nick ?? member.user.global_name ?? member.user.username);
 }
 
-/** Chunk lines into strings each ≤ maxChars and ≤ maxLines lines (gallery §6.4, View Event). */
+/** Chunk lines into strings each ≤ maxChars and ≤ maxLines lines (gallery §6.4, View Status). */
 export function chunkLines(lines: string[], maxChars: number, maxLines: number): string[] {
   const chunks: string[] = [];
   let cur: string[] = [];

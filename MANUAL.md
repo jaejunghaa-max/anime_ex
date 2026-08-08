@@ -45,8 +45,10 @@ mission, their pick, reminders, and the reveal.
 2. Fill in the built-in **"Link of your MAL/AniList"** field — e.g.
    `https://myanimelist.net/profile/you`, `https://myanimelist.net/animelist/you`
    or `https://anilist.co/user/you`. This is what your Secret Santa studies to
-   pick your anime, so a public, up-to-date list gets you better gifts. Answer
-   the manager's questions (a second step appears if there are more than four).
+   pick your anime, so a public, up-to-date list gets you better gifts. (List
+   somewhere else? The bot warns, but a red **⚠ Proceed anyway** lets you keep
+   any link.) Answer the manager's questions (a second step appears if there
+   are more than four).
 3. Review the **summary card** and press **✅ Confirm Sign-Up**.
 
 Until sign-ups close you can press **✏ Edit My Sign-Up** (same form,
@@ -70,36 +72,41 @@ Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
 both work — "frieren", "Sousou no Frieren" and 「葬送のフリーレン」 all find
 the same show), pick the right season from the results, and **📨 Send** it.
 
-- If they decline, you get a ping with how many declines they have left — and
-  which titles they've already sent back (you can't re-pick those).
-- When they approve (or their declines run out), you get a 🎉 ping — mission
-  complete.
+- If they decline, you get a ping with the round count and which titles
+  they've already sent back (you can't re-pick those).
+- When they accept, you get a 🎉 ping.
 
 ### Your pick 🎁
 
 When *your* Secret Santa sends a pick, your thread gets a card with the anime
 (cover, year, episodes, MAL link) and two buttons:
 
-- **Thank you!😊** — locks it in. That's your anime for the event.
-- **Sorry😞** — sends it back. Your Santa picks again. You can only do this
-  as many times as the manager allowed (shown on the card); after your last
-  decline, **the next pick locks in automatically**.
+- **Thank you!😊** — accepts it. Accepting is **not** a hard lock: a red
+  **No. I'll decline it.😞** button stays on the card, so you can change your
+  mind any time **until the manager launches** the event.
+- **Sorry😞** — sends it back and your Santa picks again. Declining (before
+  *or* after accepting) spends one of your Sorry😞s; the manager sets how many
+  you get. Once they're spent, the buttons to send picks back disappear.
+
+Picks that are still unanswered when the manager launches lock in
+automatically. At launch, everything is final.
 
 Lost a thread? Press **🎯 My Status** on the pinned panel — it shows both your
 mission and your pick, with the same buttons.
 
 ### The event itself
 
-Once every pick in the event is locked in, the manager launches. Your thread
-gets the **assignment card**:
+Once the picking is done, the manager launches. Your thread gets the
+**assignment card**:
 
-- **Your anime** — the locked-in pick. Watch the full season. *Who picked it
-  stays secret until the reveal.*
+- **Your pick** — on top: who will be reviewing what you chose, with their
+  MAL/AniList link.
+- **Your anime** — below it: your own pick. Watch the full season. *Who picked
+  it stays secret until the reveal.*
 - **📝 Open your review doc** — your personal Google Doc. Write your review
   there any time before the deadline. The link lives on this card permanently.
 - **⭐ Score it /10** — rate your given anime (1–10), changeable until reviews
   close.
-- **Your pick** — a recap of what you chose for your person.
 
 Reminders arrive in this thread as the deadline approaches (and optionally by
 DM, if the manager enabled mirroring). You count as "started" once your doc
@@ -186,22 +193,22 @@ their Santa mission card (who they pick for + that person's list link +
 RECOMMENDING by itself.
 
 **RECOMMENDING — the heart of v3.** The panel shows
-`locked / awaiting reply / waiting on their Santa` counts live.
+`accepted / awaiting reply / waiting on their Santa` counts live.
 
 - **📊 View Status** — one line per participant: what they were picked,
-  whether it's ✅ approved / 🔒 auto-locked / ⏩ manager-locked / ⏳ awaiting
-  reply / 🎁 still waiting (with decline counts).
+  whether it's ✅ accepted / ⏳ awaiting reply / 🎁 still waiting (with
+  decline counts).
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
   haven't picked (or got declined and haven't re-picked), and giftees sitting
   on a pending pick. The nudge lands in their thread with the right buttons.
-- **⏩ Force-finalize** — locks every ⏳ *pending* pick on the giftee's behalf
-  (for giftees who never reply). It cannot conjure picks that were never sent.
 - **↩ Back to Matching** — the undo: wipes **all** picks, approvals and
   declines, and unlocks the assignment for regrouping. Threads stay and are
   reused; old thread cards become stale (their buttons politely refuse).
 - **🚀 Launch** — set the review deadline, timezone, reminder days
-  (default `7,3,1`), and optional DM mirroring; confirm. Launch **refuses
-  until every pick is locked in** — the panel tells you what's missing.
+  (default `7,3,1`), and optional DM mirroring; confirm. Launch only refuses
+  while some **Santa hasn't sent a pick at all**. Picks that are still
+  ⏳ awaiting a reply get locked in by the launch itself — the confirmation
+  warns you first with **‼️The pending picks will be locked**.
 
 **LAUNCHING** — the bot creates one review doc per participant (for their
 locked-in anime) and posts the assignment card in their existing thread,
@@ -209,13 +216,13 @@ about 5 per minute; the panel counts up and flips to RUNNING by itself.
 Redeploys or crashes lose nothing — it resumes where it left off.
 
 **RUNNING**
-- **📊 View Event** — per-participant status (`✍ 2,431 chars · ⭐ 8/10` /
-  `❌ not started`). **Each click also queues a status refresh** — click,
-  wait a minute, click again for fresh numbers. Status also refreshes on its
-  own every 30 minutes.
+- The panel always links **📋 View Sheet** — the sheet is the detail view
+  (per-participant Review Length, Score, `⚠ missing` flags).
+- **🔄 Refresh** — queues a status refresh; the panel and sheet update within
+  a minute or two. Status also refreshes on its own every 30 minutes.
 - **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
-- **🏁 Close Reviews** — choose **Close & post gallery** (public reveal in
-  `#anime-exchange`) or **Close quietly** (reveals only in private threads).
+- **🏁 Close Reviews** — one confirm; closing always posts the public gallery
+  in `#anime-exchange` along with the private reveal cards.
 
 **CLOSING** — a final status snapshot is taken, then **all docs flip to
 view-only before any reveal link is posted**, then reveal cards (and the
@@ -245,7 +252,7 @@ automatically if it drifts.
 | **Group** | **you** (during Matching only) | loop membership — positive integer, blank = 1 |
 | Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
 | Recommendation | bot | the anime this row's Santa picked for them (live during Recommending) |
-| Rec. Status | bot | `⏳ awaiting reply` / `😞 declined ×k` / `✅ approved` / `🔒 locked (declines used up)` / `⏩ finalized by manager` |
+| Rec. Status | bot | `⏳ awaiting reply` / `😞 declined ×k` / `✅ accepted` / `⏩ locked at launch` |
 | Review Link | bot | each participant's doc |
 | Review Length | bot | characters written beyond the template |
 | Score | bot | the participant's ⭐/10 for their given anime |
@@ -265,7 +272,7 @@ and the whole sheet is a dashboard.
 | Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
 | Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
 | Review docs + assignment cards at Launch | ~5 participants per minute |
-| Review Length / started-writing / Score in sheet & panel | every 30 min, plus on every **View Event** click |
+| Review Length / started-writing / Score in sheet & panel | every 30 min, plus on every **🔄 Refresh** click |
 | Reminders | up to 30 messages per minute |
 | Close (flips + reveals) | ~5 participants per minute, docs flip first |
 | Auto-stop / deadline banner | checked every 15 min |
@@ -284,14 +291,21 @@ your profile (`/profile/you`, `/user/you`) or your list (`/animelist/you`).
 The scheme is optional; the bot normalizes it. Other sites are rejected.
 
 **I used up my Sorry😞s. Can I still decline?**
-No — that's the deal. After your last decline, the next pick locks in
-automatically. Choose your declines wisely.
+No — declining (even of a pick you first accepted) spends the budget, and
+when it's gone the decline buttons disappear. You can still press
+**Thank you!😊**; either way the pick locks in at launch. Choose your
+declines wisely.
+
+**I said Thank you!😊 but changed my mind.**
+Press the red **No. I'll decline it.😞** on the card (or via **🎯 My
+Status**) — it works until the manager launches, as long as you have
+Sorry😞s left.
 
 **My giftee declined everything and now won't respond.**
-They can't decline forever (the budget), and if a pick is stuck **⏳ awaiting
-reply**, the manager's **⏩ Force-finalize** locks it. If your pick was
-declined and *you're* stuck, just recommend again — declined titles are shown
-so you don't repeat them.
+They can't decline forever (the budget), and a pick stuck **⏳ awaiting
+reply** simply locks in when the manager launches. If your pick was declined
+and *you're* stuck, just recommend again — declined titles are shown so you
+don't repeat them.
 
 **A Santa never sends a pick.**
 The manager can 📣 Remind them (the nudge has the Recommend button in it). If
@@ -318,9 +332,9 @@ server; reconnecting with a different account only affects *new* files.
 **A button replies "this control is from an older version."**
 The panel was mid-update — it repaints itself; just click again.
 
-**Someone shows "❌ not started" but they've written plenty.**
-Status updates every 30 minutes; click **View Event** twice (a minute apart)
-to force it. "Started" means ~20+ characters beyond the doc template.
+**Someone shows "not started" but they've written plenty.**
+Status updates every 30 minutes; press **🔄 Refresh** and check the sheet a
+minute later. "Started" means ~20+ characters beyond the doc template.
 
 **A participant left the server mid-event.**
 Their row stays and the loop is unaffected. If it happens before their pick

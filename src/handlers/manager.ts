@@ -640,11 +640,8 @@ export async function recoView(c: HCtx): Promise<Response> {
   const lines = all.map((s, idx) => {
     const santa = all[loops.santa[idx]!]!;
     switch (s.reco_status) {
-      case 'FINAL': {
-        const via = s.reco_final_via === 'EXHAUSTED' ? '🔒 auto-locked'
-          : s.reco_final_via === 'FORCED' ? '⏩ manager-locked' : '✅ approved';
-        return `<@${s.user_id}> — ${via}: **${s.reco_title}** (from ${santa.display_name})`;
-      }
+      case 'FINAL':
+        return `<@${s.user_id}> — ✅ accepted: **${s.reco_title}** (from ${santa.display_name})`;
       case 'PENDING':
         return `<@${s.user_id}> — ⏳ **${s.reco_title}** awaiting their reply (from ${santa.display_name})`;
       default:
@@ -667,59 +664,9 @@ export async function recoView(c: HCtx): Promise<Response> {
     embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
   }
   return respond.ephemeral({
-    content: `📊 **${e.topic}** — ${final}/${all.length} picks locked in.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+    content: `📊 **${e.topic}** — ${final}/${all.length} picks accepted.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
     embeds,
   });
-}
-
-/** [⏩ Force-finalize] — locks every ⏳ pending pick on the giftee's behalf. */
-export async function forceFinal(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RECOMMENDING');
-  if (!e) return stale(c);
-  const agg = await c.env.DB.prepare(
-    `SELECT COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
-            COALESCE(SUM(CASE WHEN reco_status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting
-     FROM signups WHERE event_id = ?1`,
-  ).bind(e.event_id).first<{ pending: number; waiting: number }>();
-  const pending = agg?.pending ?? 0;
-  if (pending === 0) {
-    return respond.ephemeral({
-      content: (agg?.waiting ?? 0) > 0
-        ? `⏩ Nothing is pending — **${agg!.waiting}** participant(s) are still waiting on their Santa. Use 📣 Remind Now to nudge the Santas.`
-        : '⏩ Nothing to force — every pick is already locked in. 🎉',
-    });
-  }
-  return confirm(
-    `⏩ Lock in **${pending}** pending pick(s) on the giftees' behalf? They lose their chance to decline those.` +
-    ((agg?.waiting ?? 0) > 0 ? `\n(**${agg!.waiting}** more are still waiting on their Santa — this doesn't affect them.)` : ''),
-    'ax:force_final:go', `⏩ Confirm — lock ${pending} pick(s)`, Style.PRIMARY,
-  );
-}
-
-export async function forceFinalGo(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RECOMMENDING');
-  if (!e) return stale(c);
-  bg(c, async () => {
-    const res = await c.env.DB.prepare(
-      "UPDATE signups SET reco_status = 'FINAL', reco_final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND reco_status = 'PENDING'",
-    ).bind(now(), e.event_id).run();
-    const locked = res.meta.changes ?? 0;
-    const left = await c.env.DB
-      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
-      .bind(e.event_id).first<{ n: number }>();
-    const items = await getItems(c.env, e.event_id);
-    const ordered = await orderedSignups(c.env, e.event_id);
-    await rewriteSheet(c.env, c.guild, e, items, ordered).catch(() => {});
-    await repaint(c);
-    await editOriginal(c.env, c.i.token, {
-      content: `⏩ Locked **${locked}** pending pick(s).` +
-        ((left?.n ?? 0) > 0
-          ? ` **${left!.n}** participant(s) are still waiting on their Santa.`
-          : ' ✅ Everyone is locked in — ready to 🚀 Launch.'),
-      components: [],
-    });
-  });
-  return respond.deferUpdate();
 }
 
 /** [↩ Back to Matching] — destructive: wipes every pick/decline, keeps threads. */
@@ -811,22 +758,28 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
     'UPDATE events SET review_deadline = ?1, tz = ?2, reminder_days = ?3, dm_mirror = ?4, updated_at = ?5 WHERE event_id = ?6',
   ).bind(deadline, tz, days.join(','), mirror, now(), e.event_id).run();
   const n = await countSignups(c.env, e.event_id);
-  const notFinal = await c.env.DB
-    .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
-    .bind(e.event_id).first<{ n: number }>();
+  const agg = await c.env.DB.prepare(
+    `SELECT COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN reco_status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting
+     FROM signups WHERE event_id = ?1`,
+  ).bind(e.event_id).first<{ pending: number; waiting: number }>();
+  const pending = agg?.pending ?? 0;
+  const waiting = agg?.waiting ?? 0;
   const reminderLine = days.length
     ? days.map((d) => `${d}d`).join(', ') + ' before the deadline'
     : 'none';
   return respond.ephemeral({
     content:
       `🚀 **Launch ${e.topic}?**\n` +
-      `• Participants: **${n}** · picks locked: **${n - (notFinal?.n ?? 0)}/${n}**\n` +
+      `• Participants: **${n}** · accepted: **${n - pending - waiting}** · ⏳ pending: **${pending}** · 🎁 waiting on their Santa: **${waiting}**\n` +
       `• Review deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Reminders: ${reminderLine}${mirror ? ' (+ DM mirror)' : ''}\n\n` +
-      ((notFinal?.n ?? 0) > 0
-        ? `⚠ **${notFinal!.n} pick(s) are not locked in yet** — the launch will refuse until every pick is FINAL.\n\n`
-        : '') +
-      `Launching creates one review doc per participant for their locked-in anime and posts the assignment ` +
+      (waiting > 0
+        ? `⚠ **${waiting} Santa(s) haven't sent a pick** — the launch will refuse until every pick has been sent.\n\n`
+        : pending > 0
+          ? `**‼️The pending picks will be locked**\n\n`
+          : '') +
+      `Launching creates one review doc per participant for their anime and posts the assignment ` +
       `card in their existing thread (batched — ~${Math.max(1, Math.ceil(n / c.cfg.jobBatch))} min). Forward-only.`,
     components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
@@ -839,14 +792,16 @@ export async function launchGo(c: HCtx): Promise<Response> {
     return respond.ephemeral({ content: '⚠ Review deadline missing or passed — reopen **Launch**.' });
   }
   bg(c, async () => {
-    const notFinal = await c.env.DB
-      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status != 'FINAL'")
+    // Only picks that were never sent block the launch; ⏳ pending ones are
+    // locked by the sweep below (the confirm warned: ‼️).
+    const waiting = await c.env.DB
+      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status = 'NONE'")
       .bind(e.event_id).first<{ n: number }>();
-    if ((notFinal?.n ?? 0) > 0) {
+    if ((waiting?.n ?? 0) > 0) {
       await editOriginal(c.env, c.i.token, {
         content:
-          `⚠ **${notFinal!.n} pick(s) are not locked in yet.** ` +
-          `Use **⏩ Force-finalize** for the ⏳ pending ones and **📣 Remind Now** for Santas who haven't picked.`,
+          `⚠ **${waiting!.n} Santa(s) haven't sent a pick yet** — every giftee needs a pick before launch. ` +
+          `Use **📣 Remind Now** to nudge them.`,
         components: [],
       });
       return;
@@ -856,8 +811,7 @@ export async function launchGo(c: HCtx): Promise<Response> {
       await repaint(c);
       return;
     }
-    // Close the race window: a pick that landed between the gate and the
-    // transition launches as manager-finalized rather than dangling PENDING.
+    // The launch sweep: every still-pending pick locks in now.
     await c.env.DB.prepare(
       "UPDATE signups SET reco_status = 'FINAL', reco_final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND reco_status = 'PENDING'",
     ).bind(now(), e.event_id).run();
@@ -887,44 +841,21 @@ export async function launchGo(c: HCtx): Promise<Response> {
 
 // ---------------------------------------------------------------- RUNNING
 
-export async function viewEvent(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RUNNING', 'LAUNCHING', 'CLOSING');
+/** [🔄 Refresh] — queue a wrote-detection sync; the detail view is the sheet,
+ *  which the panel now links at all times. */
+export async function refreshStatus(c: HCtx): Promise<Response> {
+  const e = needState(c, 'RUNNING');
   if (!e) return stale(c);
-  // Every click doubles as the refresh trigger: show current numbers now,
-  // enqueue a sync so the next look is fresh (batched — §13.1 keeps the
-  // fan-out out of the handler; the dup-enqueue is blocked by the index).
-  let refreshNote = '';
-  if (e.state === 'RUNNING') {
-    const queued = await enqueueJob(c, e.event_id, 'sync');
-    refreshNote = queued
-      ? '\n🔄 Refreshing in the background — click **View Event** again in a minute for updated numbers.'
-      : '\n🔄 A refresh is already running — click **View Event** again shortly.';
-  }
-  const rows = await orderedSignups(c.env, e.event_id);
-  const lines = rows.map((s) => {
-    const scored = s.score !== null ? ` · ⭐ ${s.score}/10` : '';
-    if (s.doc_missing) return `<@${s.user_id}> — ⚠ review doc missing${scored}`;
-    if (!s.wrote) return `<@${s.user_id}> — ❌ not started${scored}`;
-    return `<@${s.user_id}> — ✍ ${s.char_count.toLocaleString('en-US')} chars${scored}`;
-  });
-  // One ephemeral message; total embed characters are capped at 6000 by
-  // Discord, so overflow is summarized and lives in the sheet.
-  const chunks = chunkLines(lines.length ? lines : ['*no participants*'], 3900, 40);
-  const embeds: ReturnType<typeof embed>[] = [];
-  let used = 0;
-  let shown = 0;
-  for (const d of chunks) {
-    if (embeds.length >= 9 || used + d.length > 5200) break;
-    embeds.push(embed({ description: d }));
-    used += d.length;
-    shown += d.split('\n').length;
-  }
-  if (shown < lines.length) {
-    embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
-  }
+  const queued = await enqueueJob(c, e.event_id, 'sync');
+  const agg = await c.env.DB
+    .prepare('SELECT COALESCE(SUM(wrote), 0) AS started, COUNT(*) AS n FROM signups WHERE event_id = ?1')
+    .bind(e.event_id).first<{ started: number; n: number }>();
   return respond.ephemeral({
-    content: `📊 **${e.topic}** — ${rows.filter((r) => r.wrote).length}/${rows.length} started writing.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}${refreshNote}`,
-    embeds,
+    content:
+      (queued
+        ? '🔄 **Status refresh queued** — the panel and sheet update within a minute or two.'
+        : '🔄 A refresh is already running — the panel and sheet update within a minute or two.') +
+      `\n✍ **${agg?.started ?? 0} / ${agg?.n ?? 0}** started writing · full detail in the sheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
   });
 }
 
@@ -993,17 +924,16 @@ export async function closeReviews(c: HCtx): Promise<Response> {
   if (!e) return stale(c);
   return respond.ephemeral({
     content:
-      '🏁 **Close reviews?** Docs flip to view-only, then reveals are posted to every thread.\n' +
-      'Post a public review gallery in the exchange channel?',
+      '🏁 **Close reviews?** The final status snapshot is taken, every doc flips to view-only, ' +
+      'then reveal cards go to every thread and the gallery is posted in the exchange channel.',
     components: [row(
-      btn('ax:close:gallery', '🏁 Close & post gallery', Style.SUCCESS),
-      btn('ax:close:quiet', '🏁 Close quietly', Style.PRIMARY),
+      btn('ax:close:gallery', '🏁 Confirm — close reviews', Style.SUCCESS),
       btn('ax:cancel', 'Cancel'),
     )],
   });
 }
 
-export async function closeGo(c: HCtx, gallery: boolean): Promise<Response> {
+export async function closeGo(c: HCtx): Promise<Response> {
   const e = needState(c, 'RUNNING');
   if (!e) return stale(c);
   bg(c, async () => {
@@ -1015,10 +945,10 @@ export async function closeGo(c: HCtx, gallery: boolean): Promise<Response> {
     // FIFO: the final wrote-snapshot lands before docs flip (§5.5). If a sync
     // job is already active its id is lower — same guarantee.
     await enqueueJob(c, e.event_id, 'sync');
-    await enqueueJob(c, e.event_id, 'close', { gallery });
+    await enqueueJob(c, e.event_id, 'close', { gallery: true });
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `🏁 **Closing${gallery ? ' with gallery' : ''}** — final status sync, then docs flip read-only and reveals go out. The panel tracks progress.`,
+      content: '🏁 **Closing** — final status sync, then docs flip read-only and reveals + the gallery go out. The panel tracks progress.',
       components: [],
     });
   });
