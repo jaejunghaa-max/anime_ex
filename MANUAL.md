@@ -67,8 +67,10 @@ When the manager starts the recommendation phase, a private thread named
 Santa of, with their info as a simple list:
 
 > 🎯 You are the Secret Santa of **rabbit**
+> 🎨 **Theme:** Nostalgia
 > • **list:** https://myanimelist.net/profile/rabbit
 > • **favorite genre:** mecha
+> ⏰ **Recommend by** {deadline}
 > They can send a pick back with Sorry😞. They don't know it's you. 🤫
 
 (You never see how many declines they have left — pick with your heart.)
@@ -153,11 +155,15 @@ loop, one line per participant:
 **IDLE → 🆕 New Event** creates a draft.
 
 **DRAFTING — build the sign-up form**
-- **⚙ Set Basics** — topic, sign-up deadline (`YYYY-MM-DD HH:mm`), timezone
-  (IANA, pre-filled `America/Chicago`), auto-stop on/off, and the
-  **Sorry😞 budget (0–9)**: how many times each participant may decline a
-  pick. `0` means first pick = final; `1`–`2` is the sweet spot for most
+- **⚙ Set Basics** — the **Session** (the event's name), an optional
+  **Theme** (what picks should aim for — shown to everyone: panels, the
+  sign-up announcement, and the mission/pick cards), the sign-up deadline
+  (`YYYY-MM-DD HH:mm`), timezone (IANA, pre-filled `America/Chicago`), and
+  the **Sorry😞 budget (0–9)**: how many times each participant may decline
+  a pick. `0` means first pick = final; `1`–`2` is the sweet spot for most
   groups.
+- **⏰ Auto-stop** — a toggle button on the panel (here and while sign-ups
+  are open): ON closes sign-ups automatically at the deadline.
 - **➕ Add Item / 🛠 Edit Items** — up to 9 custom questions, fill-in or
   multiple-choice (2–10 options), each with an optional **description**
   (helper text shown under the question on the sign-up form) and each
@@ -193,9 +199,13 @@ hand-tune → Validate → Start Recommending**:
    Group column (blank = 1), **blocks** any 1-person group, **warns** on
    2-person groups (a mutual pair — you pick for each other; fine if
    intended), then re-sorts rows into clean blocks.
-5. **🎯 Start Recommending** — validates once more, then **locks the
-   assignment**. From here the sheet's row order and Group column are a
-   dashboard, not an input.
+5. **🎯 Start Recommending** — set the **recommendation deadline**
+   (`YYYY-MM-DD HH:mm` + timezone) in the modal, confirm, and the
+   assignment **locks** after one more validation. From here the sheet's
+   row order and Group column are a dashboard, not an input. The deadline
+   is shown everywhere (panels, mission and pick cards, nudges); when it
+   passes, both panels flip a "deadline passed" banner — nudging and
+   launching remain your call.
 
 **PREPARING** — the bot creates one private thread per participant and posts
 their Santa mission card (who they pick for + that person's list link +

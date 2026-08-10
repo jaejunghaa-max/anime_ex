@@ -74,6 +74,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       case 'basics': return mgr.basicsSubmit(c);
       case 'item': return mgr.itemSubmit(c, arg);
       case 'grouping': return mgr.groupingSubmit(c);
+      case 'reco_start': return mgr.recoStartSubmit(c);
       case 'launch': return mgr.launchSubmit(c);
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
@@ -91,6 +92,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'google': return mgr.connectGoogle(c);
     // DRAFTING
     case 'basics': return mgr.basicsModal(c);
+    case 'autostop': return mgr.autostopToggle(c);
     case 'item_add': return mgr.itemAdd(c);
     case 'item_menu': return mgr.itemMenu(c);
     case 'item_pick': return mgr.itemPick(c);
@@ -109,7 +111,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'validate': return mgr.validate(c);
     case 'rm_confirm': return mgr.removalConfirm(c, arg);
     case 'rm_restore': return mgr.removalRestore(c, arg);
-    case 'reco_start': return arg === 'go' ? mgr.recoStartGo(c) : mgr.recoStart(c);
+    case 'reco_start': return arg === 'go' ? mgr.recoStartGo(c) : mgr.recoStartModal(c);
     // RECOMMENDING (manager)
     case 'reco_view': return mgr.recoView(c);
     case 'back_matching': return arg === 'go' ? mgr.backMatchingGo(c) : mgr.backMatching(c);

@@ -89,17 +89,23 @@ export async function connectGoogle(c: HCtx): Promise<Response> {
 export function basicsModal(c: HCtx): Response {
   const e = needState(c, 'DRAFTING');
   if (!e) return stale(c);
+  // Auto-stop is NOT here — it's the ⏰ toggle button on the panel (a modal
+  // holds at most 5 inputs, and Session + Theme need the room).
   return respond.modal('axm:basics', 'Event basics', [
-    modalText('topic', 'Topic', { value: e.topic ?? '', max: 100, placeholder: 'Fall 2026 Exchange: Nostalgia' }),
+    modalText('topic', 'Session', {
+      value: e.topic ?? '', max: 100, placeholder: 'Fall 2026 Exchange',
+      description: 'The name of this event',
+    }),
+    modalText('theme', 'Theme (optional)', {
+      required: false, value: e.theme ?? '', max: 100,
+      placeholder: 'Nostalgia / hidden gems / movies only…',
+      description: 'What the picks should aim for — shown to everyone',
+    }),
     modalText('deadline', 'Sign-up deadline (YYYY-MM-DD HH:mm)', {
       value: e.signup_deadline && e.tz ? epochToZoned(e.signup_deadline, e.tz) : '', max: 20,
       placeholder: '2026-09-01 21:00',
     }),
     modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
-    modalSelect('autostop', 'Auto-stop sign-ups at the deadline?', [
-      { label: 'No — I will stop sign-ups manually', value: '0', default: !e.auto_stop },
-      { label: 'Yes — close sign-ups automatically', value: '1', default: !!e.auto_stop },
-    ]),
     modalText('declines', 'Sorry😞 budget per person (0–9)', {
       value: String(e.max_declines), max: 1,
       description: 'How many recommendations each participant may send back',
@@ -112,9 +118,9 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   if (!e) return stale(c);
   const f = modalFields(c.i.data?.components);
   const topic = (f.get('topic') ?? '').trim();
+  const theme = (f.get('theme') ?? '').trim().slice(0, 100) || null;
   const tz = (f.get('tz') ?? '').trim();
   const deadlineRaw = (f.get('deadline') ?? '').trim();
-  const autoStop = f.get('autostop') === '1' ? 1 : 0;
   const declinesRaw = (f.get('declines') ?? '').trim();
   if (!isValidTz(tz)) {
     return respond.ephemeral({ content: `⚠ \`${tz}\` is not a valid IANA timezone (e.g. \`Asia/Seoul\`, \`America/New_York\`). Reopen **Set Basics** and try again.` });
@@ -131,12 +137,32 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   }
   const maxDeclines = parseInt(declinesRaw, 10);
   await c.env.DB.prepare(
-    'UPDATE events SET topic = ?1, tz = ?2, signup_deadline = ?3, auto_stop = ?4, max_declines = ?5, signup_banner_flipped = 0, updated_at = ?6 WHERE event_id = ?7',
-  ).bind(topic, tz, deadline, autoStop, maxDeclines, now(), e.event_id).run();
+    'UPDATE events SET topic = ?1, theme = ?2, tz = ?3, signup_deadline = ?4, max_declines = ?5, signup_banner_flipped = 0, updated_at = ?6 WHERE event_id = ?7',
+  ).bind(topic, theme, tz, deadline, maxDeclines, now(), e.event_id).run();
   bg(c, async () => {
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `✅ Basics saved — **${topic}**, sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), auto-stop ${autoStop ? 'on' : 'off'}, **${maxDeclines}** decline(s) per person.`,
+      content:
+        `✅ Basics saved — **${topic}**${theme ? ` · theme **${theme}**` : ''}, ` +
+        `sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), **${maxDeclines}** decline(s) per person.`,
+    });
+  });
+  return respond.deferEphemeral();
+}
+
+/** [⏰ Auto-stop] toggle on the DRAFTING / SIGNUP_OPEN panels. */
+export async function autostopToggle(c: HCtx): Promise<Response> {
+  const e = needState(c, 'DRAFTING', 'SIGNUP_OPEN');
+  if (!e) return stale(c);
+  const nv = e.auto_stop ? 0 : 1;
+  await c.env.DB.prepare('UPDATE events SET auto_stop = ?1, updated_at = ?2 WHERE event_id = ?3')
+    .bind(nv, now(), e.event_id).run();
+  bg(c, async () => {
+    await repaint(c);
+    await editOriginal(c.env, c.i.token, {
+      content: nv
+        ? '⏰ **Auto-stop ON** — sign-ups close automatically at the deadline.'
+        : '⏰ **Auto-stop OFF** — you close sign-ups manually.',
     });
   });
   return respond.deferEphemeral();
@@ -352,7 +378,8 @@ export async function openSignupsGo(c: HCtx): Promise<Response> {
     if (c.guild.participant_channel_id) {
       await postMessage(c.env, c.guild.participant_channel_id, {
         content:
-          `@everyone 📨 **${e.topic}** — sign-ups are open! ` +
+          `@everyone 📨 **${e.topic}** — sign-ups are open!` +
+          `${e.theme ? ` 🎨 Theme: **${e.theme}**.` : ''} ` +
           `Press **📝 Sign Up/Edit** on the pinned panel. ` +
           `Deadline: ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})`,
         allowed_mentions: { parse: ['everyone'] },
@@ -609,23 +636,54 @@ export async function removalRestore(c: HCtx, userId: string): Promise<Response>
 // stop being inputs), then the batched prepare job creates each private
 // thread and posts the Santa task card.
 
-export async function recoStart(c: HCtx): Promise<Response> {
+export function recoStartModal(c: HCtx): Response {
   const e = needState(c, 'MATCHING');
   if (!e) return stale(c);
+  return respond.modal('axm:reco_start', 'Start recommending', [
+    modalText('deadline', 'Recommendation deadline (YYYY-MM-DD HH:mm)', {
+      value: e.reco_deadline && e.tz ? epochToZoned(e.reco_deadline, e.tz) : '',
+      max: 20, placeholder: '2026-09-15 21:00',
+      description: 'Shown everywhere; nudging & launching stay yours',
+    }),
+    modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
+  ]);
+}
+
+export async function recoStartSubmit(c: HCtx): Promise<Response> {
+  const e = needState(c, 'MATCHING');
+  if (!e) return stale(c);
+  const f = modalFields(c.i.data?.components);
+  const tz = (f.get('tz') ?? '').trim();
+  if (!isValidTz(tz)) {
+    return respond.ephemeral({ content: `⚠ \`${tz}\` is not a valid IANA timezone. Reopen **🎯 Start Recommending** and try again.` });
+  }
+  const deadline = zonedToEpoch((f.get('deadline') ?? '').trim(), tz);
+  if (deadline === null || deadline <= now()) {
+    return respond.ephemeral({ content: '⚠ The recommendation deadline must be `YYYY-MM-DD HH:mm` and in the future. Reopen **🎯 Start Recommending**.' });
+  }
+  // Stage on the event row; ax:reco_start:go freezes it.
+  await c.env.DB.prepare(
+    'UPDATE events SET reco_deadline = ?1, tz = ?2, reco_banner_flipped = 0, updated_at = ?3 WHERE event_id = ?4',
+  ).bind(deadline, tz, now(), e.event_id).run();
   const n = await countSignups(c.env, e.event_id);
-  return confirm(
-    `🎯 **Start the recommendation phase for ${e.topic}?**\n` +
-    `Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
-    `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
-    `Each person can send picks back **${e.max_declines}** time(s).\n` +
-    `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
-    'ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS,
-  );
+  return respond.ephemeral({
+    content:
+      `🎯 **Start the recommendation phase for ${e.topic}?**\n` +
+      `• Recommendation deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
+      `• Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
+      `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
+      `Each person can send picks back **${e.max_declines}** time(s).\n` +
+      `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
+    components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
+  });
 }
 
 export async function recoStartGo(c: HCtx): Promise<Response> {
   const e = needState(c, 'MATCHING');
   if (!e) return stale(c);
+  if (!e.reco_deadline || e.reco_deadline <= now()) {
+    return respond.ephemeral({ content: '⚠ Recommendation deadline missing or passed — reopen **🎯 Start Recommending**.' });
+  }
   bg(c, async () => {
     const items = await getItems(c.env, e.event_id);
     const result = await runValidate(c.env, c.guild, e, items);
@@ -718,6 +776,9 @@ export async function backMatchingGo(c: HCtx): Promise<Response> {
            reco_card_posted = 0, updated_at = ?1
          WHERE event_id = ?2`,
       ).bind(now(), e.event_id),
+      // Deadline stays (prefills the next Start Recommending); its banner resets.
+      c.env.DB.prepare('UPDATE events SET reco_banner_flipped = 0, updated_at = ?1 WHERE event_id = ?2')
+        .bind(now(), e.event_id),
       c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
       c.env.DB.prepare('DELETE FROM reminders WHERE event_id = ?1 AND sent_at IS NULL').bind(e.event_id),
     ]);

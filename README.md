@@ -155,13 +155,14 @@ pins one panel message in each. `/setup repair` re-creates anything missing.
 
 Everything happens on the two pinned panels:
 
-1. **Connect Google** (manager panel) → **New Event** → **Set Basics** (topic,
-   sign-up deadline, timezone, auto-stop, and the **Sorry😞 budget** — how many
-   times each person may decline a pick, 0–9) → add up to 9 custom form items
-   (fill-in or MCQ, optional description shown under the question, each 👁
-   visible-to-recommender or 🔒 hidden) → **Open Sign-Ups** (creates the
-   spreadsheet in the manager's Drive and pings **@everyone** in the
-   participant channel).
+1. **Connect Google** (manager panel) → **New Event** → **Set Basics**
+   (**Session** name, optional **Theme** — shown to participants everywhere,
+   sign-up deadline, timezone, and the **Sorry😞 budget** — how many times
+   each person may decline a pick, 0–9; auto-stop is a ⏰ toggle button on
+   the panel) → add up to 9 custom form items (fill-in or MCQ, optional
+   description shown under the question, each 👁 visible-to-recommender or 🔒
+   hidden) → **Open Sign-Ups** (creates the spreadsheet in the manager's
+   Drive and pings **@everyone** in the participant channel).
 2. Participants press **Sign Up/Edit** (one button for both): the built-in
    **MAL/AniList link** field + items 1–4, an optional second modal for items
    5–9, then a summary card to confirm. Re-press to edit, or withdraw, any
@@ -182,9 +183,12 @@ Everything happens on the two pinned panels:
      (self-assignment), warns on 2-member groups (mutual pair — fine if
      intended), then re-sorts rows into contiguous group blocks and adopts
      order + membership into D1.
-   - **🎯 Start Recommending** validates once more, **locks the assignment**,
-     and runs the batched prepare job: one private thread + Santa mission card
-     per participant (~`JOB_BATCH`/min).
+   - **🎯 Start Recommending** asks for the **recommendation deadline**
+     (modal), validates once more, **locks the assignment**, and runs the
+     batched prepare job: one private thread + Santa mission card per
+     participant (~`JOB_BATCH`/min). The deadline is display-only (panels,
+     cards, nudges, plus a "passed" banner) — consistent with the rest of the
+     bot, it never transitions state by itself.
 4. **RECOMMENDING**: Santas pick via the MAL wizard; giftees accept
    (**Thank you!😊** — reversible via the red **I changed my mind to decline
    it😞** until Launch) or decline (**Sorry😞**, at most the drafted budget;

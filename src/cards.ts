@@ -40,8 +40,10 @@ export function taskCard(
     embeds: [embed({
       title: `🎯 You are the Secret Santa of ${giftee.display_name}`,
       description:
-        `Study **${giftee.display_name}**'s (<@${giftee.user_id}>) taste and recommend an anime they'll love.\n` +
+        (event.theme ? `🎨 **Theme:** ${event.theme}\n` : '') +
+        `Study **${giftee.display_name}**'s (<@${giftee.user_id}>) taste and recommend an anime they'll love${event.theme ? ' — and that fits the theme' : ''}.\n` +
         `${infoLines}\n\n` +
+        (event.reco_deadline ? `⏰ **Recommend by** ${ts(event.reco_deadline)} (${ts(event.reco_deadline, 'R')})\n` : '') +
         `${budget}\n*They don't know it's you — identities stay secret until the reveal.* 🤫`,
     })],
     components: [row(btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY))],
@@ -77,6 +79,9 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
   } else {
     choiceLine = `Locked in at launch. Enjoy! 🍿`;
   }
+  const deadlineLine = pending && event.reco_deadline
+    ? `\n⏰ Reply by ${ts(event.reco_deadline)} (${ts(event.reco_deadline, 'R')}).`
+    : '';
   return {
     content: `<@${giftee.user_id}> your Secret Santa picked something for you! 🎁`,
     embeds: [embed({
@@ -84,8 +89,9 @@ export function recoCard(event: EventRow, giftee: SignupRow): Record<string, unk
       // the [MAL] link lives in the body text.
       title: `🎁 ${giftee.reco_title}${giftee.reco_year ? ` (${giftee.reco_year})` : ''}`,
       description:
+        (event.theme ? `🎨 **Theme:** ${event.theme}\n` : '') +
         `${animeLine(giftee)}\n` +
-        `Chosen just for you — *who picked it stays secret until the reveal.*\n\n${choiceLine}`,
+        `Chosen just for you — *who picked it stays secret until the reveal.*\n\n${choiceLine}${deadlineLine}`,
       image: giftee.reco_image ?? undefined,
     })],
     components: buttons.length ? [row(...buttons)] : [],

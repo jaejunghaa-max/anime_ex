@@ -63,6 +63,17 @@ async function deadlineChecks(env: Env, cfg: Cfg): Promise<void> {
     await repaintPanels(env, cfg, e.guild_id).catch((err) => console.error('banner repaint', err));
   }
 
+  // Recommendation-deadline banner (v3.4): display-only, like the sign-up
+  // banner — nudging and launching stay manager actions.
+  const recoFlip = await env.DB.prepare(
+    "SELECT * FROM events WHERE state = 'RECOMMENDING' AND reco_banner_flipped = 0 AND reco_deadline IS NOT NULL AND reco_deadline <= ?1",
+  ).bind(t).all<EventRow>();
+  for (const e of recoFlip.results) {
+    await env.DB.prepare('UPDATE events SET reco_banner_flipped = 1, updated_at = ?1 WHERE event_id = ?2')
+      .bind(t, e.event_id).run();
+    await repaintPanels(env, cfg, e.guild_id).catch((err) => console.error('reco banner repaint', err));
+  }
+
   // Auto-stop (§4): the only deadline-driven transition, and it's cron-driven.
   const toStop = await env.DB.prepare(
     "SELECT * FROM events WHERE state = 'SIGNUP_OPEN' AND auto_stop = 1 AND signup_deadline IS NOT NULL AND signup_deadline <= ?1",
@@ -109,6 +120,7 @@ interface DueReminder {
   guild_id: string;
   state: 'RECOMMENDING' | 'RUNNING';
   review_deadline: number | null;
+  reco_deadline: number | null;
   dm_mirror: number;
   max_declines: number;
   thread_id: string | null;
@@ -133,7 +145,7 @@ interface DueReminder {
 async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
   const due = await env.DB.prepare(
     `SELECT r.id, r.event_id, r.user_id, r.kind, r.due_at,
-            e.guild_id, e.state, e.review_deadline, e.dm_mirror, e.max_declines,
+            e.guild_id, e.state, e.review_deadline, e.reco_deadline, e.dm_mirror, e.max_declines,
             s.thread_id, s.dm_channel_id, s.signup_id, s.row_order, s.wrote,
             s.doc_url, s.reco_title, s.reco_status, s.declines_used
      FROM reminders r
@@ -190,6 +202,9 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         if (canDecline) buttons.push(btn(`ax:reco_no:${r.user_id}`, 'Sorry😞', Style.DANGER));
       }
       text = `📣 A nudge from your event manager:\n${parts.join('\n')}`;
+      if (r.reco_deadline) {
+        deadlineLine = `\nDeadline: ${ts(r.reco_deadline)} (${ts(r.reco_deadline, 'R')})`;
+      }
       components = [row(...buttons)];
     } else {
       // RUNNING: manual nudges target laggards; if they started since the

@@ -63,11 +63,17 @@ export interface EventRow {
   event_id: number;
   guild_id: string;
   state: EventState;
+  /** The Session — the event's name (column kept from the old "Topic"). */
   topic: string | null;
+  /** Optional Theme — what the picks should aim for; shown to participants. */
+  theme: string | null;
   tz: string | null;
   signup_deadline: number | null;
   auto_stop: number;
   signup_banner_flipped: number;
+  /** v3.4: deadline for the recommendation phase (display + banner only). */
+  reco_deadline: number | null;
+  reco_banner_flipped: number;
   review_deadline: number | null;
   reminder_days: string;
   dm_mirror: number;

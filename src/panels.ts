@@ -102,6 +102,11 @@ const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google
  *  first line of the manager embed; the panels carry no View Sheet buttons. */
 const sheetTop = (e: EventRow): string => (e.sheet_id ? `**📝 Sheet:** ${sheetUrl(e.sheet_id)}\n` : '');
 
+/** The Theme is participant-facing — shown on every participant panel state. */
+const themeLine = (e: EventRow): string => (e.theme ? `🎨 **Theme:** ${e.theme}\n` : '');
+
+const autostopBtn = (e: EventRow) => btn('ax:autostop', `⏰ Auto-stop: ${e.auto_stop ? 'ON' : 'OFF'}`);
+
 export interface ItemSummary { label: string; type: 'FIB' | 'MCQ'; optionCount: number; visible: boolean }
 
 // ---------------------------------------------------------- manager panel
@@ -142,9 +147,10 @@ export function renderManagerPanel(
         embeds: [embed({
           title: '📝 Drafting a new event',
           description:
-            `**Topic:** ${e.topic ?? '*not set*'}\n` +
+            `**Session:** ${e.topic ?? '*not set*'}\n` +
+            `**Theme:** ${e.theme ?? '*none*'}\n` +
             `**Sign-up deadline:** ${deadline}\n` +
-            `**Timezone:** ${e.tz ?? '*not set*'} · **Auto-stop:** ${e.auto_stop ? 'on' : 'off'}\n` +
+            `**Timezone:** ${e.tz ?? '*not set*'} · **Auto-stop:** ${e.auto_stop ? 'on' : 'off'} (⏰ toggles it)\n` +
             `**Sorry😞 budget:** each person can decline **${e.max_declines}** recommendation(s)\n` +
             `${googleLine(guild)}\n\n**Sign-up form** (up to 9 custom items):\n${itemLines}`,
         })],
@@ -153,6 +159,7 @@ export function renderManagerPanel(
             btn('ax:basics', '⚙ Set Basics', Style.PRIMARY),
             btn('ax:item_add', '➕ Add Item'),
             btn('ax:item_menu', '🛠 Edit Items', Style.SECONDARY, items.length === 0),
+            autostopBtn(e),
           ),
           row(
             btn('ax:google', googleBtnLabel(guild)),
@@ -176,6 +183,7 @@ export function renderManagerPanel(
         })],
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
+          autostopBtn(e),
           btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
           abortBtn(),
         )],
@@ -228,12 +236,17 @@ export function renderManagerPanel(
         : stats.recoPending > 0
           ? `**‼️The pending picks will be locked** when you 🚀 Launch.`
           : `✅ **Every pick is accepted — ready to 🚀 Launch.**`;
+      const deadlineLine = e.reco_deadline
+        ? `⏰ **Recommendation deadline:** ${ts(e.reco_deadline)} (${ts(e.reco_deadline, 'R')})` +
+          `${e.reco_banner_flipped ? ' — **passed!** 📣 nudge or 🚀 Launch.' : ''}\n`
+        : '';
       return {
         content: '',
         embeds: [embed({
           title: `🎯 Recommending — ${e.topic}`,
           description:
             sheetTop(e) +
+            deadlineLine +
             `**${stats.recoFinal} / ${stats.count}** picks accepted · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** waiting on their Santa\n` +
             `Each person may send a pick back **${e.max_declines}** time(s) — and accepted picks stay changeable until Launch.\n` +
             statusLine +
@@ -358,6 +371,7 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
+            themeLine(e) +
             `${howItWorks(e.max_declines)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
             `**Sign-up form:** your MAL/AniList link + ${itemCount} question(s)${banner}`,
         })],
@@ -372,7 +386,7 @@ export function renderParticipantPanel(
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
-          description: '🔀 Sign-ups closed — matching in progress. Watch this space.',
+          description: themeLine(e) + '🔀 Sign-ups closed — matching in progress. Watch this space.',
         })],
         components: [],
       };
@@ -382,6 +396,7 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
+            themeLine(e) +
             '🎯 Matching done! Your **private thread** is being created — it will tell you who *you* are the Secret Santa for. A few minutes.',
         })],
         components: [],
@@ -392,8 +407,13 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
+            themeLine(e) +
             `🎯 **Recommendation time!** Pick an anime for your person, and answer the pick you receive with **Thank you!😊** or **Sorry😞**` +
             `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''}, even after accepting — until launch)` : ''}.\n` +
+            (e.reco_deadline
+              ? `⏰ **Deadline:** ${ts(e.reco_deadline)} (${ts(e.reco_deadline, 'R')})` +
+                `${e.reco_banner_flipped ? ' — **passed, lock in those picks!**' : ''}\n`
+              : '') +
             `See your **private thread** to see your status.\n` +
             `**${stats.recoFinal} / ${stats.count}** picks accepted so far.`,
         })],
@@ -404,7 +424,7 @@ export function renderParticipantPanel(
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
-          description: '🚀 All picks are locked in — review docs and assignment cards are being delivered to your thread now.',
+          description: themeLine(e) + '🚀 All picks are locked in — review docs and assignment cards are being delivered to your thread now.',
         })],
         components: [],
       };
@@ -414,6 +434,7 @@ export function renderParticipantPanel(
         embeds: [embed({
           title: `${title} — ${e.topic}`,
           description:
+            themeLine(e) +
             `🎬 Event running — check your **private thread** under this channel for your assignment.\n` +
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})`,
         })],
@@ -424,7 +445,7 @@ export function renderParticipantPanel(
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
-          description: '🏁 Reviews are closed — reveals are being posted to your thread now.',
+          description: themeLine(e) + '🏁 Reviews are closed — reveals are being posted to your thread now.',
         })],
         components: [],
       };
@@ -433,7 +454,7 @@ export function renderParticipantPanel(
         content: '',
         embeds: [embed({
           title: `${title} — ${e.topic}`,
-          description: `🎉 **${e.topic}** finished — ${stats.count} participants. Reveals are in your thread.`,
+          description: themeLine(e) + `🎉 **${e.topic}** finished — ${stats.count} participants. Reveals are in your thread.`,
         })],
         components: [],
       };
