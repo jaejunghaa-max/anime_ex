@@ -1,7 +1,7 @@
 // Thin typed D1 accessors. Handlers stay "verify → parse → 1–2 reads →
 // respond" (spec §2.4 #4); anything heavier lives in jobs.
 
-import type { Env, EventRow, EventState, FormItem, GuildRow, SignupRow } from './types';
+import type { Env, EventRow, EventState, FormItem, GuildRow, RecoRow, SignupRow } from './types';
 import { buildLoops, now, type LoopMap } from './util';
 
 export function getGuild(env: Env, guildId: string): Promise<GuildRow | null> {
@@ -59,19 +59,48 @@ export async function dbBatchChunked(env: Env, stmts: D1PreparedStatement[]): Pr
   }
 }
 
+/** All recommendation slots of an event, grouped by giftee and slot-ordered. */
+export async function loadRecos(env: Env, eventId: number): Promise<RecoMap> {
+  const res = await env.DB
+    .prepare('SELECT * FROM recos WHERE event_id = ?1 ORDER BY signup_id, slot')
+    .bind(eventId).all<RecoRow>();
+  const map = new Map<number, RecoRow[]>();
+  for (const r of res.results) {
+    const list = map.get(r.signup_id);
+    if (list) list.push(r);
+    else map.set(r.signup_id, [r]);
+  }
+  return map;
+}
+
+/** giftee signup_id → their recommendation slots, in slot order. */
+export type RecoMap = Map<number, RecoRow[]>;
+
+export const recosOf = (map: RecoMap, signupId: number): RecoRow[] => map.get(signupId) ?? [];
+
+/** Slots whose pick is already sent (PENDING or FINAL), in slot order. */
+export const sentRecos = (rows: RecoRow[]): RecoRow[] => rows.filter((r) => r.status !== 'NONE');
+
+/** Titles of the slots that will be watched — everything sent, in slot order. */
+export const recoTitles = (rows: RecoRow[]): string[] =>
+  sentRecos(rows).map((r) => r.title ?? '?');
+
 /**
- * Ordered rows + loop map + this-user resolution in one read — the shape every
- * RECOMMENDING interaction needs. santa[idx] recommends FOR idx; the row this
- * user recommends for is recipient[idx] (their "giftee").
+ * Ordered rows + loop map + recommendation slots + this-user resolution in one
+ * read — the shape every RECOMMENDING interaction needs. santa[idx]
+ * recommends FOR idx; the row this user recommends for is recipient[idx]
+ * (their "giftee").
  */
 export async function loopContext(env: Env, eventId: number): Promise<{
   all: SignupRow[];
   loops: LoopMap;
+  recos: RecoMap;
   indexOfUser: (userId: string) => number;
 }> {
   const all = await orderedSignups(env, eventId);
   const loops = buildLoops(all.map((s) => s.group_no));
-  return { all, loops, indexOfUser: (userId) => all.findIndex((s) => s.user_id === userId) };
+  const recos = await loadRecos(env, eventId);
+  return { all, loops, recos, indexOfUser: (userId) => all.findIndex((s) => s.user_id === userId) };
 }
 
 export function answersOf(s: { answers_json: string }): Record<string, string> {

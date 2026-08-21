@@ -8,8 +8,9 @@
 import type { DraftRow, FormItem } from '../types';
 import { modalFields } from '../types';
 import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
-import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
-import { rewriteSheet, writeScoreCell } from '../sheet';
+import type { RecoRow } from '../types';
+import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups, sentRecos } from '../db';
+import { rewriteSheet, writeScoreCells } from '../sheet';
 import { normalizeListUrl, now, sanitizeName, truncate } from '../util';
 import { bg, HCtx, stale, throttledCountRepaint } from './common';
 
@@ -345,6 +346,14 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
 
 const SCORE_STATES = ['LAUNCHING', 'RUNNING'] as const;
 
+/** The participant's own anime, in slot order (max 5 — one modal select each). */
+async function myRecos(c: HCtx, eventId: number, signupId: number): Promise<RecoRow[]> {
+  const res = await c.env.DB
+    .prepare('SELECT * FROM recos WHERE event_id = ?1 AND signup_id = ?2 ORDER BY slot')
+    .bind(eventId, signupId).all<RecoRow>();
+  return sentRecos(res.results);
+}
+
 export async function scoreModal(c: HCtx): Promise<Response> {
   const e = c.event;
   if (!e || !SCORE_STATES.includes(e.state as (typeof SCORE_STATES)[number])) {
@@ -353,16 +362,23 @@ export async function scoreModal(c: HCtx): Promise<Response> {
   }
   const me = await getSignup(c.env, e.event_id, c.userId);
   if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
-  return respond.modal('axm:score', 'Score your given anime', [
-    modalSelect('score', 'Your score out of 10',
-      Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => ({
+  const mine = await myRecos(c, e.event_id, me.signup_id);
+  if (mine.length === 0) return respond.ephemeral({ content: 'You have no anime to score yet.' });
+  // One select per anime (≤5 = the modal cap); each optional, so people can
+  // score what they've finished and come back for the rest.
+  return respond.modal('axm:score', mine.length > 1 ? 'Score your anime' : 'Score your given anime',
+    mine.map((r) => modalSelect(`score:${r.reco_id}`, truncate(r.title ?? 'Your anime', 45), [
+      { label: '— no score —', value: '0', default: r.score === null },
+      ...Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => ({
         label: `${'⭐'.repeat(Math.ceil(n / 2))} ${n} / 10`,
         value: String(n),
-        default: me.score === n,
+        default: r.score === n,
       })),
-      { placeholder: me.score !== null ? `Current: ${me.score}/10` : 'Pick a score…' },
-    ),
-  ]);
+    ], {
+      required: false,
+      placeholder: r.score !== null ? `Current: ${r.score}/10` : 'Pick a score…',
+    })),
+  );
 }
 
 export async function scoreSubmit(c: HCtx): Promise<Response> {
@@ -372,20 +388,37 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
   }
   const me = await getSignup(c.env, e.event_id, c.userId);
   if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
-  const v = parseInt(modalFields(c.i.data?.components).get('score') ?? '', 10);
-  if (!(v >= 1 && v <= 10)) return respond.ephemeral({ content: '⚠ Score must be between 1 and 10.' });
-  await c.env.DB.prepare('UPDATE signups SET score = ?1, updated_at = ?2 WHERE signup_id = ?3')
-    .bind(v, now(), me.signup_id).run();
+  const mine = await myRecos(c, e.event_id, me.signup_id);
+  const fields = modalFields(c.i.data?.components);
+  const updates: RecoRow[] = [];
+  for (const r of mine) {
+    const raw = fields.get(`score:${r.reco_id}`);
+    if (raw === undefined || raw === '') continue;          // left untouched
+    const v = parseInt(raw, 10);
+    if (!(v >= 0 && v <= 10)) continue;
+    const score = v === 0 ? null : v;                        // 0 = clear it
+    if (score === r.score) continue;
+    updates.push({ ...r, score });
+  }
+  if (updates.length === 0) {
+    return respond.ephemeral({ content: '⭐ Nothing changed — your scores stay as they were.' });
+  }
+  await c.env.DB.batch(updates.map((r) =>
+    c.env.DB.prepare('UPDATE recos SET score = ?1, updated_at = ?2 WHERE reco_id = ?3')
+      .bind(r.score, now(), r.reco_id)));
   bg(c, async () => {
     if (me.row_order !== null) {
-      // Best-effort sheet cell; the periodic sync self-heals it if this fails.
+      // Best-effort sheet cells; a job's self-heal rewrite fixes any failure.
       const items = await getItems(c.env, e.event_id);
-      await writeScoreCell(c.env, c.guild, e, items, me.row_order, v).catch((err) => {
-        console.error('score cell write failed (sync will heal)', err);
+      await writeScoreCells(c.env, c.guild, e, items, me.row_order, updates).catch((err) => {
+        console.error('score cell write failed (self-heal will fix)', err);
       });
     }
+    const saved = updates
+      .map((r) => `**${r.title}** ${r.score === null ? '— cleared' : `**${r.score}/10**`}`)
+      .join(' · ');
     await editOriginal(c.env, c.i.token, {
-      content: `⭐ Saved — you scored **${me.reco_title ?? 'your given anime'}** **${v}/10**. You can change it until reviews close.`,
+      content: `⭐ Saved — ${saved}. You can change scores until reviews close.`,
     });
   });
   return respond.deferEphemeral();

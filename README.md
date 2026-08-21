@@ -2,8 +2,8 @@
 
 A Discord bot that runs an **Anime Exchange**: every participant signs up with a
 link to their **MAL/AniList**, gets secretly matched to another participant, and
-**recommends an anime tailored to them** — while their own Secret Santa picks one
-for *them*. A pick can be sent back ("Sorry😞") up to a manager-set number of
+**recommends anime tailored to them** (1–5 picks each, the manager's choice) —
+while their own Secret Santa picks for *them*. A pick can be sent back ("Sorry😞") up to a manager-set number of
 times; once every pick is locked in ("Thank you!😊"), the exchange launches:
 everyone watches their full season and writes a review in a Google Doc by a
 deadline. Matches form circular loops — one big loop over everyone by default,
@@ -34,23 +34,26 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 - **Signup**: no anime search anymore. The form's built-in item is
   **"Link of your MAL/AniList"** (validated; `myanimelist.net` / `anilist.co`,
   with a red **⚠ Proceed anyway** escape hatch for lists hosted elsewhere),
-  plus up to 9 custom items.
+  plus up to 9 custom items (each with an optional description).
 - **Matching** (unchanged tools): 🧩 Grouping, 🔀 Shuffle, manual row-reorder +
   Group column in the sheet, ✅ Validate. Instead of Launch, the manager presses
   **🎯 Start Recommending** — assignments lock.
 - **Preparing** (new batched job): each participant's private thread is created
   *now*, with a task card: who they're the Secret Santa of, that person's
   list link + 👁-visible answers, and a **🎯 Recommend an anime** button.
-- **Recommending** (new): the Santa picks via the MAL search wizard (EN/JP
-  re-ranking, same engine as v2's signup search). The giftee's thread gets the
-  pick with **[Thank you!😊]** / **[Sorry😞]**. Accepting is reversible — a red
-  **[I changed my mind to decline it😞]** stays on the card until Launch.
-  Declining (before or after accepting) spends the per-person budget (**0–9,
-  set in Set Basics at drafting**); a declined title can't be re-picked, a
-  spent budget just removes the decline buttons — nothing locks mid-phase —
-  and the Santa never sees the remaining count. Manager tools: 🔄 Refresh,
-  📣 Remind Now, ↩ Back to Matching (wipes picks, keeps threads); the per-pair
-  detail lives in the sheet, linked in every panel body.
+- **Recommending** (new): the Santa fills their giftee's **slots** — one to
+  five picks, `events.max_recos`, set in Set Basics — via the MAL search
+  wizard (EN/JP re-ranking, same engine as v2's signup search). Each pick
+  lands in the giftee's thread as its own card with **[Thank you!😊]** /
+  **[Sorry😞]**. Accepting is reversible — a red **[I changed my mind to
+  decline it😞]** stays on the card until Launch. Declining (before or after
+  accepting) spends the per-person budget (**0–9**, set with the 😞 button at
+  drafting) shared across all slots; a declined title — or one already used in
+  another slot — can't be re-picked, a spent budget just removes the decline
+  buttons (nothing locks mid-phase), and the Santa never sees the remaining
+  count. Manager tools: 🔄 Refresh, 📣 Remind Now, ↩ Back to Matching (wipes
+  picks, keeps threads); the per-slot detail lives in the sheet, linked in
+  every panel body.
 - **Launch onward**: identical to v2, except Launch refuses only while a Santa
   hasn't sent a pick, locks any still-pending picks itself (after a bold
   **‼️The pending picks will be locked** warning), creates review docs for the
@@ -82,7 +85,7 @@ src/
   handlers/     router, /setup, manager panel, signup wizard, recommending phase
   panels.ts     pure render(state) → panel payloads for both pinned panels
   validate.ts   sheet↔D1 reconciliation; row order + Group column = the loops
-  sheet.ts      sheet layout; derived Santa + Recommendation block (never read as input)
+  sheet.ts      sheet layout; derived Santa + per-slot Recommendation blocks (never read as input)
   google.ts     OAuth token cache + Drive/Sheets/Docs REST
   mal.ts        official MAL / Jikan search + EN/JP re-ranking + 24 h cache
   discord.ts    REST client + component/response builders
@@ -122,7 +125,11 @@ npm run deploy
 > `events`/`signups`/`jobs` tables for the new flow. Rows survive, but v2
 > signup-time anime picks are dropped (v3 has no such pick) — **finish or
 > 🛑 Abort any in-flight event before running `npm run migrate`**, then deploy.
-> `0005` is additive (username column + normalizing pre-3.1 lock states).
+> `0005`–`0007` are additive (username, item descriptions, Theme and the
+> recommendation deadline). `0008` adds the `recos` table for multi-pick
+> events and moves the per-recommendation columns (and ⭐ score) off
+> `signups`; in-flight recommendations carry over as slot 1, so `max_recos`
+> defaults to 1 and existing events behave exactly as before.
 
 ### 3. Google Cloud OAuth client
 
@@ -157,9 +164,8 @@ Everything happens on the two pinned panels:
 
 1. **Connect Google** (manager panel) → **New Event** → **Set Basics**
    (**Session** name, optional **Theme** — shown to participants everywhere,
-   sign-up deadline, timezone, and the **Sorry😞 budget** — how many times
-   each person may decline a pick, 0–9; auto-stop is a ⏰ toggle button on
-   the panel) → add up to 9 custom form items (fill-in or MCQ, optional
+   sign-up deadline, timezone, and **Picks per person (1–5)**; the Sorry😞
+   budget and auto-stop are 😞 / ⏰ buttons on the panel) → add up to 9 custom form items (fill-in or MCQ, optional
    description shown under the question, each 👁 visible-to-recommender or 🔒
    hidden) → **Open Sign-Ups** (creates the spreadsheet in the manager's
    Drive and pings **@everyone** in the participant channel).
@@ -189,23 +195,24 @@ Everything happens on the two pinned panels:
      participant (~`JOB_BATCH`/min). The deadline is display-only (panels,
      cards, nudges, plus a "passed" banner) — consistent with the rest of the
      bot, it never transitions state by itself.
-4. **RECOMMENDING**: Santas pick via the MAL wizard; giftees accept
+4. **RECOMMENDING**: Santas fill every slot via the MAL wizard; giftees accept
    (**Thank you!😊** — reversible via the red **I changed my mind to decline
    it😞** until Launch) or decline (**Sorry😞**, at most the drafted budget;
    declined titles can't be re-picked; a spent budget removes the decline
    buttons). The sheet's **Recommendation / Rec. Status** columns update live;
-   the panel shows `accepted / pending / waiting` counts, refreshable on the
-   spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
+   the panel shows `accepted / pending / not sent` counts over all slots
+   (participants × picks), refreshable on the spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
    who owe a pick + giftees who owe a reply) and **↩ Back to Matching** (wipes
    all picks; threads are reused later). **🚀 Launch** refuses only while some
    Santa hasn't sent a pick; ⏳ pending picks are locked by the launch itself
    after a bold **‼️The pending picks will be locked** warning.
-5. Launch runs as a batched job: per participant a review doc for their final
-   anime (`Review of {Anime} by {name}`, header "given to
-   `Display(@username)`", anyone-with-link **editor**), and an assignment card
-   in their existing thread — their own pick recap (giftee + list link) on
-   top, their anime below, doc link + **⭐ Score it /10** buttons last. The
-   panel counts up and flips to RUNNING by itself.
+5. Launch runs as a batched job: per participant **one** review doc for their
+   final anime (`Review of {Anime} by {name}`, or `Reviews by {name} —
+   {Session}` with an H2 section per pick when there are several; header
+   "given to `Display(@username)`", anyone-with-link **editor**), and an
+   assignment card in their existing thread — their own pick recap (giftee +
+   list link) on top, their anime below, doc link + **⭐ Score it /10**
+   buttons last. The panel counts up and flips to RUNNING by itself.
 6. During RUNNING: wrote-detection every 30 minutes and on every **🔄 Refresh**
    click (chars written beyond the doc template; the sheet — linked from the
    panel at all times — shows a **Review Length** column), progress panel,

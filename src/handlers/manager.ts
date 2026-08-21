@@ -8,10 +8,15 @@ import { modalFields } from '../types';
 import {
   btn, editOriginal, embed, linkBtn, modalSelect, modalText, postMessage, respond, row, stringSelect, Style,
 } from '../discord';
-import { getItems, countSignups, dbBatchChunked, loopContext, optionsOf, orderedSignups, transition } from '../db';
+import {
+  getItems, countSignups, dbBatchChunked, loadRecos, loopContext, optionsOf, orderedSignups,
+  recosOf, transition,
+} from '../db';
 import { repostPanels } from '../panels';
 import { createSpreadsheet, isConnected, sheetUrl } from '../google';
-import { rewriteSheet, writeHeader } from '../sheet';
+// Sheet writes before the recommendation phase carry no slots (none exist
+// yet); anything after it goes through rewriteSheetFromDb.
+import { rewriteSheet, rewriteSheetFromDb, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
 import {
   chunkLines, dealSizes, epochToZoned, isValidTz, now, parseReminderDays, randomHex, shuffled, ts,
@@ -106,9 +111,9 @@ export function basicsModal(c: HCtx): Response {
       placeholder: '2026-09-01 21:00',
     }),
     modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
-    modalText('declines', 'Sorry😞 budget per person (0–9)', {
-      value: String(e.max_declines), max: 1,
-      description: 'How many recommendations each participant may send back',
+    modalText('recos', 'Picks per person (1–5)', {
+      value: String(e.max_recos), max: 1,
+      description: 'How many anime each Secret Santa recommends',
     }),
   ]);
 }
@@ -121,7 +126,7 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   const theme = (f.get('theme') ?? '').trim().slice(0, 100) || null;
   const tz = (f.get('tz') ?? '').trim();
   const deadlineRaw = (f.get('deadline') ?? '').trim();
-  const declinesRaw = (f.get('declines') ?? '').trim();
+  const recosRaw = (f.get('recos') ?? '').trim();
   if (!isValidTz(tz)) {
     return respond.ephemeral({ content: `⚠ \`${tz}\` is not a valid IANA timezone (e.g. \`Asia/Seoul\`, \`America/New_York\`). Reopen **Set Basics** and try again.` });
   }
@@ -132,22 +137,52 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   if (deadline <= now()) {
     return respond.ephemeral({ content: '⚠ The sign-up deadline must be in the future. Reopen **Set Basics** and try again.' });
   }
-  if (!/^[0-9]$/.test(declinesRaw)) {
-    return respond.ephemeral({ content: '⚠ The Sorry😞 budget must be a single digit **0–9**. Reopen **Set Basics** and try again.' });
+  if (!/^[1-5]$/.test(recosRaw)) {
+    return respond.ephemeral({ content: '⚠ Picks per person must be **1–5**. Reopen **Set Basics** and try again.' });
   }
-  const maxDeclines = parseInt(declinesRaw, 10);
+  const maxRecos = parseInt(recosRaw, 10);
   await c.env.DB.prepare(
-    'UPDATE events SET topic = ?1, theme = ?2, tz = ?3, signup_deadline = ?4, max_declines = ?5, signup_banner_flipped = 0, updated_at = ?6 WHERE event_id = ?7',
-  ).bind(topic, theme, tz, deadline, maxDeclines, now(), e.event_id).run();
+    'UPDATE events SET topic = ?1, theme = ?2, tz = ?3, signup_deadline = ?4, max_recos = ?5, signup_banner_flipped = 0, updated_at = ?6 WHERE event_id = ?7',
+  ).bind(topic, theme, tz, deadline, maxRecos, now(), e.event_id).run();
   bg(c, async () => {
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
       content:
         `✅ Basics saved — **${topic}**${theme ? ` · theme **${theme}**` : ''}, ` +
-        `sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), **${maxDeclines}** decline(s) per person.`,
+        `sign-ups until ${ts(deadline)} (${ts(deadline, 'R')}), **${maxRecos}** pick(s) per person.`,
     });
   });
   return respond.deferEphemeral();
+}
+
+/** [😞 Declines: N] on the DRAFTING panel → a 0–9 select (the Set Basics
+ *  modal is full at Discord's five inputs). */
+export function declinesMenu(c: HCtx): Response {
+  const e = needState(c, 'DRAFTING');
+  if (!e) return stale(c);
+  return respond.ephemeral({
+    content: '😞 How many times may each participant send a pick back?',
+    components: [row(stringSelect('ax:declines_set', 'Sorry😞 budget…',
+      Array.from({ length: 10 }, (_, n) => ({
+        label: n === 0 ? '0 — no take-backs' : `${n} — up to ${n} decline(s)`,
+        value: String(n),
+        default: e.max_declines === n,
+      })),
+    ))],
+  });
+}
+
+export async function declinesSet(c: HCtx): Promise<Response> {
+  const e = needState(c, 'DRAFTING');
+  if (!e) return stale(c);
+  const v = parseInt(c.i.data?.values?.[0] ?? '', 10);
+  if (!(v >= 0 && v <= 9)) return respond.update({ content: '⚠ Pick a number between 0 and 9.', components: [] });
+  await c.env.DB.prepare('UPDATE events SET max_declines = ?1, updated_at = ?2 WHERE event_id = ?3')
+    .bind(v, now(), e.event_id).run();
+  c.ec.waitUntil(repaint(c).catch(() => {}));
+  return respond.update({
+    content: `😞 Sorry budget set to **${v}** per person.`, components: [],
+  });
 }
 
 /** [⏰ Auto-stop] toggle on the DRAFTING / SIGNUP_OPEN panels. */
@@ -672,7 +707,7 @@ export async function recoStartSubmit(c: HCtx): Promise<Response> {
       `• Recommendation deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
       `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
-      `Each person can send picks back **${e.max_declines}** time(s).\n` +
+      `Everyone recommends **${e.max_recos}** anime and can send picks back **${e.max_declines}** time(s).\n` +
       `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
     components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
@@ -714,20 +749,20 @@ export async function recoStartGo(c: HCtx): Promise<Response> {
 export async function recoView(c: HCtx): Promise<Response> {
   const e = needState(c, 'RECOMMENDING', 'PREPARING');
   if (!e) return stale(c);
-  const { all, loops } = await loopContext(c.env, e.event_id);
+  const { all, loops, recos } = await loopContext(c.env, e.event_id);
   const lines = all.map((s, idx) => {
     const santa = all[loops.santa[idx]!]!;
-    switch (s.reco_status) {
-      case 'FINAL':
-        return `<@${s.user_id}> — ✅ accepted: **${s.reco_title}** (from ${santa.display_name})`;
-      case 'PENDING':
-        return `<@${s.user_id}> — ⏳ **${s.reco_title}** awaiting their reply (from ${santa.display_name})`;
-      default:
-        return `<@${s.user_id}> — 🎁 waiting on **${santa.display_name}**` +
-          (s.declines_used > 0 ? ` (declined ×${s.declines_used})` : '');
-    }
+    const slots = recosOf(recos, s.signup_id);
+    const parts = slots.map((r) => {
+      if (r.status === 'FINAL') return `✅ **${r.title}**`;
+      if (r.status === 'PENDING') return `⏳ **${r.title}**`;
+      return '🎁 *waiting*';
+    });
+    return `<@${s.user_id}> — ${parts.join(' · ') || '—'} (from ${santa.display_name})` +
+      (s.declines_used > 0 ? ` · declined ×${s.declines_used}` : '');
   });
-  const final = all.filter((s) => s.reco_status === 'FINAL').length;
+  const flat = [...recos.values()].flat();
+  const final = flat.filter((r) => r.status === 'FINAL').length;
   const chunks = chunkLines(lines.length ? lines : ['*no participants*'], 3900, 40);
   const embeds: ReturnType<typeof embed>[] = [];
   let used = 0;
@@ -742,7 +777,7 @@ export async function recoView(c: HCtx): Promise<Response> {
     embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
   }
   return respond.ephemeral({
-    content: `📊 **${e.topic}** — ${final}/${all.length} picks accepted.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
+    content: `📊 **${e.topic}** — ${final}/${flat.length} picks accepted.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
     embeds,
   });
 }
@@ -769,10 +804,10 @@ export async function backMatchingGo(c: HCtx): Promise<Response> {
       return;
     }
     await c.env.DB.batch([
+      // Slots are recreated (empty) by the next prepare job.
+      c.env.DB.prepare('DELETE FROM recos WHERE event_id = ?1').bind(e.event_id),
       c.env.DB.prepare(
-        `UPDATE signups SET reco_mal_id = NULL, reco_title = NULL, reco_title_en = NULL, reco_year = NULL,
-           reco_type = NULL, reco_episodes = NULL, reco_url = NULL, reco_image = NULL,
-           reco_status = 'NONE', reco_final_via = NULL, declines_used = 0, reco_declined_json = '[]',
+        `UPDATE signups SET declines_used = 0, reco_declined_json = '[]',
            reco_card_posted = 0, updated_at = ?1
          WHERE event_id = ?2`,
       ).bind(now(), e.event_id),
@@ -782,9 +817,7 @@ export async function backMatchingGo(c: HCtx): Promise<Response> {
       c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
       c.env.DB.prepare('DELETE FROM reminders WHERE event_id = ?1 AND sent_at IS NULL').bind(e.event_id),
     ]);
-    const items = await getItems(c.env, e.event_id);
-    const ordered = await orderedSignups(c.env, e.event_id);
-    await rewriteSheet(c.env, c.guild, e, items, ordered).catch(() => {});
+    await rewriteSheetFromDb(c.env, c.guild, e).catch(() => {});
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
       content: '↩ **Back to Matching** — all picks wiped, assignments unlocked. Old thread cards are stale; fresh missions go out when you press 🎯 Start Recommending again.',
@@ -840,10 +873,12 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
   ).bind(deadline, tz, days.join(','), mirror, now(), e.event_id).run();
   const n = await countSignups(c.env, e.event_id);
   const agg = await c.env.DB.prepare(
-    `SELECT COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
-            COALESCE(SUM(CASE WHEN reco_status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting
-     FROM signups WHERE event_id = ?1`,
-  ).bind(e.event_id).first<{ pending: number; waiting: number }>();
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending,
+            COALESCE(SUM(CASE WHEN status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting
+     FROM recos WHERE event_id = ?1`,
+  ).bind(e.event_id).first<{ total: number; pending: number; waiting: number }>();
+  const total = agg?.total ?? 0;
   const pending = agg?.pending ?? 0;
   const waiting = agg?.waiting ?? 0;
   const reminderLine = days.length
@@ -852,11 +887,11 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
   return respond.ephemeral({
     content:
       `🚀 **Launch ${e.topic}?**\n` +
-      `• Participants: **${n}** · accepted: **${n - pending - waiting}** · ⏳ pending: **${pending}** · 🎁 waiting on their Santa: **${waiting}**\n` +
+      `• Participants: **${n}** · picks accepted: **${total - pending - waiting}/${total}** · ⏳ pending: **${pending}** · 🎁 not sent yet: **${waiting}**\n` +
       `• Review deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Reminders: ${reminderLine}${mirror ? ' (+ DM mirror)' : ''}\n\n` +
       (waiting > 0
-        ? `⚠ **${waiting} Santa(s) haven't sent a pick** — the launch will refuse until every pick has been sent.\n\n`
+        ? `⚠ **${waiting} pick(s) haven't been sent** — the launch will refuse until every Santa has finished.\n\n`
         : pending > 0
           ? `**‼️The pending picks will be locked**\n\n`
           : '') +
@@ -876,13 +911,13 @@ export async function launchGo(c: HCtx): Promise<Response> {
     // Only picks that were never sent block the launch; ⏳ pending ones are
     // locked by the sweep below (the confirm warned: ‼️).
     const waiting = await c.env.DB
-      .prepare("SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND reco_status = 'NONE'")
+      .prepare("SELECT COUNT(*) AS n FROM recos WHERE event_id = ?1 AND status = 'NONE'")
       .bind(e.event_id).first<{ n: number }>();
     if ((waiting?.n ?? 0) > 0) {
       await editOriginal(c.env, c.i.token, {
         content:
-          `⚠ **${waiting!.n} Santa(s) haven't sent a pick yet** — every giftee needs a pick before launch. ` +
-          `Use **📣 Remind Now** to nudge them.`,
+          `⚠ **${waiting!.n} pick(s) haven't been sent yet** — every slot needs a pick before launch. ` +
+          `Use **📣 Remind Now** to nudge the Santas who still owe one.`,
         components: [],
       });
       return;
@@ -894,7 +929,7 @@ export async function launchGo(c: HCtx): Promise<Response> {
     }
     // The launch sweep: every still-pending pick locks in now.
     await c.env.DB.prepare(
-      "UPDATE signups SET reco_status = 'FINAL', reco_final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND reco_status = 'PENDING'",
+      "UPDATE recos SET status = 'FINAL', final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND status = 'PENDING'",
     ).bind(now(), e.event_id).run();
     // Freeze reminders (§10.1): rows per (day × participant), future only.
     const days = parseReminderDays(e.reminder_days) ?? [];
@@ -950,15 +985,15 @@ export async function refreshStatus(c: HCtx): Promise<Response> {
     } else {
       const agg = await c.env.DB.prepare(
         `SELECT COUNT(*) AS n,
-                COALESCE(SUM(CASE WHEN reco_status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final,
-                COALESCE(SUM(CASE WHEN reco_status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending
-         FROM signups WHERE event_id = ?1`,
+                COALESCE(SUM(CASE WHEN status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final,
+                COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending
+         FROM recos WHERE event_id = ?1`,
       ).bind(e.event_id).first<{ n: number; final: number; pending: number }>();
       const n = agg?.n ?? 0;
       const final = agg?.final ?? 0;
       const pending = agg?.pending ?? 0;
       await editOriginal(c.env, c.i.token, {
-        content: `🔄 Refreshed — **${final} / ${n}** accepted · ⏳ **${pending}** awaiting a reply · 🎁 **${Math.max(0, n - final - pending)}** waiting on their Santa.`,
+        content: `🔄 Refreshed — **${final} / ${n}** picks accepted · ⏳ **${pending}** awaiting a reply · 🎁 **${Math.max(0, n - final - pending)}** not sent yet.`,
       });
     }
   });
@@ -978,11 +1013,14 @@ async function remindTargets(c: HCtx, e: EventRow): Promise<string[]> {
       .bind(e.event_id).all<{ user_id: string }>();
     return laggards.results.map((l) => l.user_id);
   }
-  const { all, loops } = await loopContext(c.env, e.event_id);
+  const { all, loops, recos } = await loopContext(c.env, e.event_id);
   const targets = new Set<string>();
   all.forEach((s, idx) => {
-    if (s.reco_status === 'NONE') targets.add(all[loops.santa[idx]!]!.user_id); // their Santa owes a pick
-    if (s.reco_status === 'PENDING') targets.add(s.user_id);                    // they owe a reply
+    const slots = recosOf(recos, s.signup_id);
+    // Their Santa still owes at least one pick…
+    if (slots.some((r) => r.status === 'NONE')) targets.add(all[loops.santa[idx]!]!.user_id);
+    // …or they owe a reply on one.
+    if (slots.some((r) => r.status === 'PENDING')) targets.add(s.user_id);
   });
   return [...targets];
 }

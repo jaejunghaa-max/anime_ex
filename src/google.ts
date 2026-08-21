@@ -163,24 +163,44 @@ export async function createDoc(env: Env, guild: GuildRow, title: string): Promi
   return res.documentId;
 }
 
-/** Write the small review template (§7.5): H1 title + context line + divider.
- *  `givenTo` arrives preformatted, e.g. `J(@j_handle)`. */
+/**
+ * Write the small review template (§7.5): H1 title + context line + divider,
+ * plus one H2 section per anime when the participant got several picks.
+ * `givenTo` arrives preformatted, e.g. `J(@j_handle)`.
+ */
 export async function writeDocTemplate(
-  env: Env, guild: GuildRow, docId: string, animeTitle: string, givenTo: string, deadlineText: string,
+  env: Env, guild: GuildRow, docId: string,
+  t: { heading: string; givenTo: string; deadlineText: string; sections: string[] },
 ): Promise<void> {
-  const heading = `Review of ${animeTitle}\n`;
-  const body = `given to ${givenTo} — deadline ${deadlineText}\n————————————————\n\n`;
-  await gapi(env, guild, 'POST', `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
-    requests: [
-      { insertText: { location: { index: 1 }, text: heading + body } },
-      {
+  const parts: Array<{ text: string; style?: 'HEADING_1' | 'HEADING_2' }> = [
+    { text: `${t.heading}\n`, style: 'HEADING_1' },
+    { text: `given to ${t.givenTo} — deadline ${t.deadlineText}\n————————————————\n\n` },
+  ];
+  for (const title of t.sections) {
+    parts.push({ text: `${title}\n`, style: 'HEADING_2' });
+    parts.push({ text: '\n' });
+  }
+  // Build the text and the paragraph-style ranges in one pass; Docs indices
+  // start at 1 and each part's range covers its own trailing newline.
+  let text = '';
+  let index = 1;
+  const styles: unknown[] = [];
+  for (const p of parts) {
+    const start = index;
+    text += p.text;
+    index += p.text.length;
+    if (p.style) {
+      styles.push({
         updateParagraphStyle: {
-          range: { startIndex: 1, endIndex: heading.length },
-          paragraphStyle: { namedStyleType: 'HEADING_1' },
+          range: { startIndex: start, endIndex: start + p.text.length },
+          paragraphStyle: { namedStyleType: p.style },
           fields: 'namedStyleType',
         },
-      },
-    ],
+      });
+    }
+  }
+  await gapi(env, guild, 'POST', `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
+    requests: [{ insertText: { location: { index: 1 }, text } }, ...styles],
   });
 }
 

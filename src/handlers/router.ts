@@ -45,7 +45,9 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
   }
 
   const customId = i.data?.custom_id ?? '';
-  const [ns, action = '', arg = ''] = customId.split(':');
+  // `ax:{action}[:{arg}[:{arg2}]]` — reco buttons carry the owner id and the
+  // recommendation id (§12).
+  const [ns, action = '', arg = '', arg2 = ''] = customId.split(':');
   const isModal = i.type === IT.MODAL;
   if ((ns !== 'ax' && ns !== 'axm') || !action) {
     return respond.ephemeral({ content: 'Unknown control.' });
@@ -93,6 +95,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     // DRAFTING
     case 'basics': return mgr.basicsModal(c);
     case 'autostop': return mgr.autostopToggle(c);
+    case 'declines': return mgr.declinesMenu(c);
+    case 'declines_set': return mgr.declinesSet(c);
     case 'item_add': return mgr.itemAdd(c);
     case 'item_menu': return mgr.itemMenu(c);
     case 'item_pick': return mgr.itemPick(c);
@@ -143,8 +147,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'reco_pick': return reco.recoPick(c);
     case 'reco_again': return reco.recoAgain(c);
     case 'reco_send': return reco.recoSend(c);
-    case 'reco_ok': return reco.recoApprove(c, arg);
-    case 'reco_no': return reco.recoDecline(c, arg);
+    case 'reco_ok': return reco.recoApprove(c, arg, arg2);
+    case 'reco_no': return reco.recoDecline(c, arg, arg2);
     case 'reco_me': return reco.recoStatusMe(c);
     default:
       return stale(c, 'This control is from an older version of the panel.');

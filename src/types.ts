@@ -79,6 +79,8 @@ export interface EventRow {
   dm_mirror: number;
   /** v3: how many times each participant may "Sorry😞" a recommendation (0–9). */
   max_declines: number;
+  /** v4: how many anime each Secret Santa recommends for their giftee (1–5). */
+  max_recos: number;
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
@@ -107,6 +109,33 @@ export type RecoStatus = 'NONE' | 'PENDING' | 'FINAL';
  *  FORCED = still pending at Launch, locked by the launch sweep. */
 export type RecoFinalVia = 'APPROVED' | 'FORCED';
 
+/**
+ * One recommendation, addressed by (giftee signup, slot 1..max_recos). The
+ * giftee accepts/declines each slot on its own; the Santa fills the lowest
+ * empty slot each time they recommend.
+ */
+export interface RecoRow {
+  reco_id: number;
+  event_id: number;
+  /** The GIFTEE's signup_id — whose slot this is. */
+  signup_id: number;
+  slot: number;
+  mal_id: number | null;
+  title: string | null;
+  title_en: string | null;
+  year: number | null;
+  type: string | null;
+  episodes: number | null;
+  url: string | null;
+  image: string | null;
+  status: RecoStatus;
+  final_via: RecoFinalVia | null;
+  /** The giftee's /10 rating of this anime. */
+  score: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface SignupRow {
   signup_id: number;
   event_id: number;
@@ -119,17 +148,7 @@ export interface SignupRow {
   answers_json: string;
   row_order: number | null;
   group_no: number;
-  // v3 recommendation block — the anime recommended TO this row by their Santa.
-  reco_mal_id: number | null;
-  reco_title: string | null;
-  reco_title_en: string | null;
-  reco_year: number | null;
-  reco_type: string | null;
-  reco_episodes: number | null;
-  reco_url: string | null;
-  reco_image: string | null;
-  reco_status: RecoStatus;
-  reco_final_via: RecoFinalVia | null;
+  /** Sorry😞 budget spent, counted per person across all slots. */
   declines_used: number;
   reco_declined_json: string;
   reco_card_posted: number;
@@ -147,7 +166,6 @@ export interface SignupRow {
   wrote: number;
   last_edited: number | null;
   char_count: number;
-  score: number | null; // participant's /10 rating of their given anime
   created_at: number;
   updated_at: number;
 }

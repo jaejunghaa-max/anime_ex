@@ -4,7 +4,7 @@ import {
   parseReminderDays, sanitizeName, shuffled, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
-import { a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell } from '../src/sheet';
+import { a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, slotCol } from '../src/sheet';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
 import type { FormItem } from '../src/types';
@@ -197,24 +197,41 @@ describe('sheet layout (§8.3)', () => {
     const layout = layoutOf(items);
     expect(h[layout.groupCol - 1]).toBe('Group');       // manager-editable (rev. 3)
     expect(h[layout.santaCol - 1]).toBe('Secret Santa');
-    expect(h[layout.recoCol - 1]).toBe('Recommendation'); // v3: the Santa's pick for this row
-    expect(h[layout.recoStatusCol - 1]).toBe('Rec. Status');
+    expect(h[layout.recoCol - 1]).toBe('Recommendation'); // single-pick events stay unnumbered
+    expect(h[layout.recoCol]).toBe('Rec. Status');
+    expect(h[layout.recoCol + 1]).toBe('Score');
     expect(h[layout.lengthCol - 1]).toBe('Review Length');
-    expect(h[layout.scoreCol - 1]).toBe('Score');
     expect(h).not.toContain('Anime');
     expect(h).not.toContain('Given Anime');
     expect(layout.groupCol).toBe(7);     // A-D fixed + 2 items + Group
     expect(h).toHaveLength(layout.lastCol);
   });
+  it('numbers the per-slot columns when an event has multiple picks (v4)', () => {
+    const h = headerRow(items, 3);
+    const layout = layoutOf(items, 3);
+    expect(h[layout.recoCol - 1]).toBe('Recommendation 1');
+    expect(h[slotCol(layout, 2) - 1]).toBe('Recommendation 2');
+    expect(h[slotCol(layout, 3) - 1]).toBe('Recommendation 3');
+    expect(h[slotCol(layout, 3)]).toBe('Rec. Status 3');
+    expect(h[slotCol(layout, 3) + 1]).toBe('Score 3');
+    expect(h[layout.linkCol - 1]).toBe('Review Link');
+    expect(h[layout.lengthCol - 1]).toBe('Review Length');
+    expect(h).toHaveLength(layout.lastCol);
+    // Three slots add six columns over the single-pick layout.
+    expect(layout.lastCol).toBe(layoutOf(items).lastCol + 6);
+    expect(slotCol(layout, 1)).toBe(layout.recoCol);
+  });
   it('reco cells mirror the approve/decline state machine', () => {
-    expect(recoCell({ reco_title: 'Frieren', reco_year: 2023 })).toBe('Frieren (2023)');
-    expect(recoCell({ reco_title: 'Frieren', reco_year: null })).toBe('Frieren');
-    expect(recoCell({ reco_title: null, reco_year: null })).toBe('');
-    expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 0 })).toBe('');
-    expect(recoStatusCell({ reco_status: 'NONE', reco_final_via: null, declines_used: 2 })).toBe('😞 declined ×2');
-    expect(recoStatusCell({ reco_status: 'PENDING', reco_final_via: null, declines_used: 0 })).toBe('⏳ awaiting reply');
-    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'APPROVED', declines_used: 1 })).toBe('✅ accepted');
-    expect(recoStatusCell({ reco_status: 'FINAL', reco_final_via: 'FORCED', declines_used: 0 })).toBe('⏩ locked at launch');
+    expect(recoCell({ title: 'Frieren', year: 2023 })).toBe('Frieren (2023)');
+    expect(recoCell({ title: 'Frieren', year: null })).toBe('Frieren');
+    expect(recoCell({ title: null, year: null })).toBe('');
+    expect(recoCell(undefined)).toBe('');
+    expect(recoStatusCell({ status: 'NONE', final_via: null })).toBe('');
+    expect(recoStatusCell({ status: 'NONE', final_via: null }, 2)).toBe('😞 declined ×2');
+    expect(recoStatusCell(undefined, 1)).toBe('😞 declined ×1');
+    expect(recoStatusCell({ status: 'PENDING', final_via: null })).toBe('⏳ awaiting reply');
+    expect(recoStatusCell({ status: 'FINAL', final_via: 'APPROVED' }, 1)).toBe('✅ accepted');
+    expect(recoStatusCell({ status: 'FINAL', final_via: 'FORCED' })).toBe('⏩ locked at launch');
   });
 });
 

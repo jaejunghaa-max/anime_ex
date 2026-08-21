@@ -2,9 +2,9 @@
 // and each tick performs at most ONE category of fan-out work so the
 // per-invocation CPU/subrequest budget always holds (§2.4).
 
-import type { Cfg, Env, EventRow, GuildRow, RecoStatus, SignupRow } from './types';
+import type { Cfg, Env, EventRow, GuildRow, RecoRow, SignupRow } from './types';
 import { btn, createDm, linkBtn, postMessage, row, Style } from './discord';
-import { getItems, orderedSignups, transition } from './db';
+import { getItems, loadRecos, orderedSignups, recosOf, sentRecos, transition, type RecoMap } from './db';
 import { drainJobs } from './jobs';
 import { repaintPanels } from './panels';
 import { adoptSignupOrder } from './validate';
@@ -129,8 +129,6 @@ interface DueReminder {
   row_order: number | null;
   wrote: number;
   doc_url: string | null;
-  reco_title: string | null;
-  reco_status: RecoStatus;
   declines_used: number;
 }
 
@@ -147,7 +145,7 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
     `SELECT r.id, r.event_id, r.user_id, r.kind, r.due_at,
             e.guild_id, e.state, e.review_deadline, e.reco_deadline, e.dm_mirror, e.max_declines,
             s.thread_id, s.dm_channel_id, s.signup_id, s.row_order, s.wrote,
-            s.doc_url, s.reco_title, s.reco_status, s.declines_used
+            s.doc_url, s.declines_used
      FROM reminders r
      JOIN events e ON e.event_id = r.event_id AND e.state IN ('RECOMMENDING', 'RUNNING')
      JOIN signups s ON s.event_id = r.event_id AND s.user_id = r.user_id
@@ -156,13 +154,18 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
   ).bind(now(), cfg.remindersPerTick).all<DueReminder>();
   if (due.results.length === 0) return 0;
 
-  // RECOMMENDING nudges need each user's giftee (previous row in the loop) →
-  // load the loop structure once per event that needs it.
-  const orders = new Map<number, { all: SignupRow[]; loops: LoopMap }>();
+  // Both flavors need the recommendation slots (which picks are owed, which
+  // anime to name); RECOMMENDING also needs each user's giftee (previous row
+  // in the loop). Load once per event in this batch.
+  const orders = new Map<number, { all: SignupRow[]; loops: LoopMap; recos: RecoMap }>();
   for (const r of due.results) {
-    if (r.state === 'RECOMMENDING' && !orders.has(r.event_id)) {
+    if (!orders.has(r.event_id)) {
       const all = await orderedSignups(env, r.event_id);
-      orders.set(r.event_id, { all, loops: buildLoops(all.map((s) => s.group_no)) });
+      orders.set(r.event_id, {
+        all,
+        loops: buildLoops(all.map((s) => s.group_no)),
+        recos: await loadRecos(env, r.event_id),
+      });
     }
   }
 
@@ -179,27 +182,33 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
     let deadlineLine = '';
     let components: unknown[] = [];
 
+    const ctx = orders.get(r.event_id)!;
+    const myRecos: RecoRow[] = recosOf(ctx.recos, r.signup_id);
+
     if (r.state === 'RECOMMENDING') {
-      const ctx = orders.get(r.event_id)!;
       const idx = ctx.all.findIndex((s) => s.signup_id === r.signup_id);
       const giftee = idx >= 0 ? ctx.all[ctx.loops.recipient[idx]!] : undefined;
-      const needsPick = !!giftee && giftee.signup_id !== r.signup_id && giftee.reco_status === 'NONE';
-      const needsReply = r.reco_status === 'PENDING';
-      if (!needsPick && !needsReply) {
+      const owed = giftee && giftee.signup_id !== r.signup_id
+        ? recosOf(ctx.recos, giftee.signup_id).filter((x) => x.status === 'NONE').length
+        : 0;
+      const pending = myRecos.filter((x) => x.status === 'PENDING');
+      if (owed === 0 && pending.length === 0) {
         done.push(r.id); // resolved since the nudge was queued — skip silently
         continue;
       }
       const parts: string[] = [];
       const buttons: unknown[] = [];
-      if (needsPick) {
-        parts.push(`🎯 **${giftee!.display_name}** is still waiting for your recommendation${giftee!.declines_used > 0 ? ' (your last pick was sent back)' : ''}.`);
+      if (owed > 0) {
+        parts.push(`🎯 **${giftee!.display_name}** is still waiting for **${owed}** pick(s) from you.`);
         buttons.push(btn(`ax:reco:${r.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
       }
-      if (needsReply) {
+      if (pending.length > 0) {
         const canDecline = r.declines_used < r.max_declines;
-        parts.push(`🎁 **${r.reco_title}** is waiting for your reply — **Thank you!😊** accepts it${canDecline ? ', **Sorry😞** sends it back' : ''}.`);
-        buttons.push(btn(`ax:reco_ok:${r.user_id}`, 'Thank you!😊', Style.SUCCESS));
-        if (canDecline) buttons.push(btn(`ax:reco_no:${r.user_id}`, 'Sorry😞', Style.DANGER));
+        const titles = pending.map((x) => `**${x.title}**`).join(', ');
+        parts.push(`🎁 ${titles} ${pending.length > 1 ? 'are' : 'is'} waiting for your reply — **Thank you!😊** accepts${canDecline ? ', **Sorry😞** sends back' : ''}.`);
+        const first = pending[0]!;
+        buttons.push(btn(`ax:reco_ok:${r.user_id}:${first.reco_id}`, 'Thank you!😊', Style.SUCCESS));
+        if (canDecline) buttons.push(btn(`ax:reco_no:${r.user_id}:${first.reco_id}`, 'Sorry😞', Style.DANGER));
       }
       text = `📣 A nudge from your event manager:\n${parts.join('\n')}`;
       if (r.reco_deadline) {
@@ -213,7 +222,8 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         done.push(r.id);
         continue;
       }
-      const anime = r.reco_title ?? 'your assigned anime';
+      const titles = sentRecos(myRecos).map((x) => x.title ?? '?');
+      const anime = titles.length ? titles.join(', ') : 'your assigned anime';
       const deadline = r.review_deadline ?? r.due_at;
       const daysLeft = Math.max(1, Math.round((deadline - r.due_at) / 86400));
       text = r.kind === 'manual'
