@@ -4,7 +4,10 @@
 
 import type { Cfg, Env, EventRow, GuildRow, RecoRow, SignupRow } from './types';
 import { btn, createDm, linkBtn, postMessage, row, Style } from './discord';
-import { getItems, loadRecos, orderedSignups, recosOf, sentRecos, transition, type RecoMap } from './db';
+import {
+  activeRecos, getItems, loadRecos, orderedSignups, pendingRecos, picksLeft, recosOf, transition,
+  type RecoMap,
+} from './db';
 import { drainJobs } from './jobs';
 import { repaintPanels } from './panels';
 import { adoptSignupOrder } from './validate';
@@ -63,14 +66,20 @@ async function deadlineChecks(env: Env, cfg: Cfg): Promise<void> {
     await repaintPanels(env, cfg, e.guild_id).catch((err) => console.error('banner repaint', err));
   }
 
-  // Recommendation-deadline banner (v3.4): display-only, like the sign-up
-  // banner — nudging and launching stay manager actions.
+  // Recommendation deadline (v3.4/v5): the banner always flips; with auto-stop
+  // ON the phase also closes itself — every ⏳ pending pick locks in, exactly
+  // what Launch would have done. Launching itself stays a manager action.
   const recoFlip = await env.DB.prepare(
     "SELECT * FROM events WHERE state = 'RECOMMENDING' AND reco_banner_flipped = 0 AND reco_deadline IS NOT NULL AND reco_deadline <= ?1",
   ).bind(t).all<EventRow>();
   for (const e of recoFlip.results) {
     await env.DB.prepare('UPDATE events SET reco_banner_flipped = 1, updated_at = ?1 WHERE event_id = ?2')
       .bind(t, e.event_id).run();
+    if (e.auto_stop) {
+      await env.DB.prepare(
+        "UPDATE recos SET status = 'FINAL', final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND status = 'PENDING'",
+      ).bind(t, e.event_id).run();
+    }
     await repaintPanels(env, cfg, e.guild_id).catch((err) => console.error('reco banner repaint', err));
   }
 
@@ -188,18 +197,20 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
     if (r.state === 'RECOMMENDING') {
       const idx = ctx.all.findIndex((s) => s.signup_id === r.signup_id);
       const giftee = idx >= 0 ? ctx.all[ctx.loops.recipient[idx]!] : undefined;
-      const owed = giftee && giftee.signup_id !== r.signup_id
-        ? recosOf(ctx.recos, giftee.signup_id).filter((x) => x.status === 'NONE').length
-        : 0;
-      const pending = myRecos.filter((x) => x.status === 'PENDING');
-      if (owed === 0 && pending.length === 0) {
+      // A Santa owes something only while their giftee has nothing accepted
+      // and room for more (picks are a maximum, not a quota).
+      const gifteeRecos = giftee && giftee.signup_id !== r.signup_id
+        ? recosOf(ctx.recos, giftee.signup_id) : [];
+      const owes = !!giftee && activeRecos(gifteeRecos).length === 0 && picksLeft(giftee, gifteeRecos) > 0;
+      const pending = pendingRecos(myRecos);
+      if (!owes && pending.length === 0) {
         done.push(r.id); // resolved since the nudge was queued — skip silently
         continue;
       }
       const parts: string[] = [];
       const buttons: unknown[] = [];
-      if (owed > 0) {
-        parts.push(`🎯 **${giftee!.display_name}** is still waiting for **${owed}** pick(s) from you.`);
+      if (owes) {
+        parts.push(`🎯 **${giftee!.display_name}** is still waiting for a recommendation from you.`);
         buttons.push(btn(`ax:reco:${r.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
       }
       if (pending.length > 0) {
@@ -222,7 +233,7 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         done.push(r.id);
         continue;
       }
-      const titles = sentRecos(myRecos).map((x) => x.title ?? '?');
+      const titles = activeRecos(myRecos).map((x: RecoRow) => x.title ?? '?');
       const anime = titles.length ? titles.join(', ') : 'your assigned anime';
       const deadline = r.review_deadline ?? r.due_at;
       const daysLeft = Math.max(1, Math.round((deadline - r.due_at) / 86400));

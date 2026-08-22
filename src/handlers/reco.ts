@@ -1,24 +1,31 @@
-// RECOMMENDING-phase interactions (v4). Every Santa fills their giftee's
-// recommendation slots (1..event.max_recos) through the MAL wizard; the
-// giftee answers each pick with Thank you!😊 (accepts — reversible until
-// Launch via the red "I changed my mind to decline it😞") or Sorry😞 (sends
-// it back). Declining spends the events.max_declines budget, counted per
-// person across all slots; a spent budget only removes the decline buttons —
-// nothing locks until Launch sweeps the still-pending picks.
+// RECOMMENDING-phase interactions (v5). Every Santa may send their giftee up
+// to `signups.max_recos` anime — the giftee's own choice at sign-up, and a
+// MAXIMUM, not a quota: one accepted pick is enough for the exchange to
+// launch. Each pick is answered with Thank you!😊 (accepts) or Sorry😞 (sends
+// it back, spending the per-person decline budget). Accepted picks can still
+// be taken back until Launch, via the status panel's "I'll change my mind😞".
 //
-// Buttons on thread cards carry the owner's user id (`ax:reco*:{uid}[:{reco}]`)
-// so a moderator clicking inside someone else's private thread is rejected
-// instead of silently acting on their own row (§13.2). All writes are
-// conditional on the current status, so double-clicks and races produce a
-// harmless ephemeral, never a duplicate side effect (§13.4).
+// Each participant's thread holds one consolidated status panel (cards.ts
+// statusPanel), edited in place on every change; pick cards are transient.
+//
+// Buttons carry the owner's user id (`ax:reco*:{uid}[:{reco}]`) so a moderator
+// clicking inside someone else's private thread is rejected instead of acting
+// on their own row (§13.2). Every write is conditional on the current status,
+// so double-clicks and races produce a harmless ephemeral, never a duplicate
+// side effect (§13.4).
 
 import type { AnimeCandidate } from '../mal';
 import { searchAnime } from '../mal';
 import type { DraftRow, EventRow, RecoRow, SignupRow } from '../types';
 import { modalFields } from '../types';
-import { btn, editOriginal, embed, linkBtn, modalText, postMessage, respond, row, stringSelect, Style } from '../discord';
-import { declinedOf, getItems, getSignup, loopContext, recosOf, sentRecos } from '../db';
-import { declineNotice, lockedNotice, recoCard } from '../cards';
+import {
+  btn, deleteMessage, editMessage, editOriginal, embed, modalText, postMessage, respond, row,
+  stringSelect, Style,
+} from '../discord';
+import {
+  activeRecos, declinedRecos, finalRecos, getItems, loopContext, pendingRecos, picksLeft, recosOf,
+} from '../db';
+import { animeLabel, answerNotice, recoCard, statusPanel } from '../cards';
 import { writeRecoCells } from '../sheet';
 import { now, truncate } from '../util';
 import { bg, HCtx, repaint, stale, throttledCountRepaint } from './common';
@@ -73,9 +80,9 @@ interface RecoCtx {
   giftee: SignupRow;
   /** The row that recommends for this user (next row in their loop). */
   santa: SignupRow;
-  /** My giftee's slots — the ones I have to fill. */
+  /** My giftee's picks — the ones I send. */
   gifteeRecos: RecoRow[];
-  /** My own slots — the picks I answer. */
+  /** My own picks — the ones I answer. */
   myRecos: RecoRow[];
 }
 
@@ -111,17 +118,33 @@ async function recoCtxOf(c: HCtx): Promise<RecoCtx | Response> {
 const candLabel = (a: { title: string; year?: number | null }) =>
   `${a.title}${a.year ? ` (${a.year})` : ''}`;
 
-/** The slot a new pick goes into: the lowest one still empty. */
-const nextOpenSlot = (recos: RecoRow[]): RecoRow | undefined =>
-  recos.filter((r) => r.status === 'NONE').sort((a, b) => a.slot - b.slot)[0];
-
-const openCount = (recos: RecoRow[]): number => recos.filter((r) => r.status === 'NONE').length;
-
-/** "2 of 3 sent" progress for the Santa's messages. */
-function progressLine(e: EventRow, gifteeRecos: RecoRow[]): string {
-  if (e.max_recos <= 1) return '';
-  const sent = sentRecos(gifteeRecos).length;
-  return `\n📌 **${sent} of ${e.max_recos}** picks sent.`;
+/**
+ * Re-render one participant's consolidated status panel in their thread.
+ * Best-effort: a missing thread or deleted panel never breaks the action.
+ */
+async function refreshPanel(c: HCtx, e: EventRow, signupId: number): Promise<void> {
+  try {
+    const { all, loops, recos } = await loopContext(c.env, e.event_id);
+    const idx = all.findIndex((s) => s.signup_id === signupId);
+    if (idx < 0) return;
+    const owner = all[idx]!;
+    if (!owner.thread_id) return;
+    const items = await getItems(c.env, e.event_id);
+    const giftee = all[loops.recipient[idx]!]!;
+    const payload = statusPanel(
+      e, owner, giftee, items,
+      recosOf(recos, giftee.signup_id), recosOf(recos, owner.signup_id),
+    );
+    if (owner.mission_msg_id) {
+      await editMessage(c.env, owner.thread_id, owner.mission_msg_id, payload);
+    } else {
+      const msg = await postMessage(c.env, owner.thread_id, payload);
+      await c.env.DB.prepare('UPDATE signups SET mission_msg_id = ?1 WHERE signup_id = ?2')
+        .bind(msg.id, signupId).run();
+    }
+  } catch (err) {
+    console.error(`status panel refresh failed for signup ${signupId}`, err);
+  }
 }
 
 // ------------------------------------------------------- recommend wizard
@@ -133,22 +156,19 @@ export async function recoOpen(c: HCtx, ownerArg: string): Promise<Response> {
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
   const { e, giftee, gifteeRecos } = ctx;
-  const open = nextOpenSlot(gifteeRecos);
-  if (!open) {
-    const pending = gifteeRecos.filter((r) => r.status === 'PENDING').length;
+  if (picksLeft(giftee, gifteeRecos) <= 0) {
+    const pending = pendingRecos(gifteeRecos).length;
     return respond.ephemeral({
       content: pending > 0
-        ? `⏳ All your picks for **${giftee.display_name}** are sent — ${pending} still waiting for their reply.`
-        : `✅ **${giftee.display_name}** has all your picks. Mission complete!`,
+        ? `⏳ **${pending}** pick(s) are still waiting for **${giftee.display_name}**'s reply. You cannot send picks now.`
+        : `✅ **${giftee.display_name}** has all **${giftee.max_recos}** anime they asked for. Mission complete!`,
     });
   }
   const draft = await loadDraft(c, e.event_id);
   return respond.modal('axm:reco_kw', `Pick for ${truncate(giftee.display_name, 25)}`, [
     modalText('kw', 'Anime title keyword (English or Japanese)', {
       value: draft?.keyword ?? '', max: 100, placeholder: 'e.g. Frieren / 葬送のフリーレン',
-      description: e.max_recos > 1
-        ? `Pick ${open.slot} of ${e.max_recos} for ${truncate(giftee.display_name, 40)}`
-        : undefined,
+      description: `${giftee.display_name} accepts at most ${giftee.max_recos} anime`,
     }),
   ]);
 }
@@ -180,9 +200,7 @@ export async function recoModalKw(c: HCtx): Promise<Response> {
       searchFailed = true;
     }
     await saveDraft(c, e.event_id, {
-      step: 'R_SEARCH',
-      keyword,
-      candidates_json: JSON.stringify(candidates),
+      step: 'R_SEARCH', keyword, candidates_json: JSON.stringify(candidates),
     });
     if (searchFailed) {
       await editOriginal(c.env, c.i.token, {
@@ -200,15 +218,15 @@ export async function recoModalKw(c: HCtx): Promise<Response> {
       });
       return;
     }
-    // Neither a title they already declined nor one already in another slot.
     const taken = new Map<number, string>();
-    for (const d of declinedOf(giftee)) taken.set(d.mal_id, '⛔ they already declined this one');
-    for (const r of sentRecos(gifteeRecos)) {
+    for (const r of declinedRecos(gifteeRecos)) {
+      if (r.mal_id !== null) taken.set(r.mal_id, '⛔ they already declined this one');
+    }
+    for (const r of activeRecos(gifteeRecos)) {
       if (r.mal_id !== null) taken.set(r.mal_id, '⛔ already one of your picks for them');
     }
     await editOriginal(c.env, c.i.token, {
-      content: `🔎 Results for **${truncate(keyword, 80)}** — pick the anime for **${giftee.display_name}**:` +
-        progressLine(e, gifteeRecos),
+      content: `🔎 Results for **${truncate(keyword, 80)}** — pick the anime for **${giftee.display_name}**:`,
       embeds: [],
       components: [
         row(stringSelect('ax:reco_pick', 'Pick an anime…', candidates.map((a, idx) => ({
@@ -223,12 +241,12 @@ export async function recoModalKw(c: HCtx): Promise<Response> {
   return fromEphemeral ? respond.deferUpdate() : respond.deferEphemeral();
 }
 
-/** Reject a pick the giftee declined before, or one already in another slot. */
+/** Reject a title the giftee declined before, or one already sent to them. */
 function duplicateReason(giftee: SignupRow, gifteeRecos: RecoRow[], malId: number): string | null {
-  if (declinedOf(giftee).some((d) => d.mal_id === malId)) {
+  if (declinedRecos(gifteeRecos).some((r) => r.mal_id === malId)) {
     return `⛔ **${giftee.display_name}** already declined that one — pick something else.`;
   }
-  if (sentRecos(gifteeRecos).some((r) => r.mal_id === malId)) {
+  if (activeRecos(gifteeRecos).some((r) => r.mal_id === malId)) {
     return `⛔ That's already one of your picks for **${giftee.display_name}** — pick something else.`;
   }
   return null;
@@ -251,16 +269,13 @@ export async function recoPick(c: HCtx): Promise<Response> {
   const dupe = duplicateReason(giftee, gifteeRecos, chosen.mal_id);
   if (dupe) {
     return respond.update({
-      content: dupe,
-      embeds: [],
+      content: dupe, embeds: [],
       components: [row(btn('ax:reco_again', '🔍 Search again', Style.PRIMARY))],
     });
   }
   await saveDraft(c, e.event_id, { ...draft, step: 'R_PICKED', chosen_json: JSON.stringify(chosen) });
-  const slot = nextOpenSlot(gifteeRecos);
   return respond.update({
-    content: `Send this pick to **${giftee.display_name}**?` +
-      (e.max_recos > 1 && slot ? ` *(pick ${slot.slot} of ${e.max_recos})*` : ''),
+    content: `Send this pick to **${giftee.display_name}**?`,
     embeds: [embed({
       title: candLabel(chosen),
       url: chosen.url,
@@ -289,11 +304,11 @@ export async function recoAgain(c: HCtx): Promise<Response> {
   ]);
 }
 
-/** [📨 Send] → conditional write on the slot → card in the giftee's thread. */
+/** [📨 Send] → insert the pick → card in the giftee's thread → panels. */
 export async function recoSend(c: HCtx): Promise<Response> {
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
-  const { e, giftee, gifteeRecos } = ctx;
+  const { e, me, giftee, gifteeRecos } = ctx;
   const draft = await loadDraft(c, e.event_id);
   const chosen = parseJson<AnimeCandidate | null>(draft?.chosen_json ?? null, null);
   if (!draft || !chosen) {
@@ -302,67 +317,76 @@ export async function recoSend(c: HCtx): Promise<Response> {
   const dupe = duplicateReason(giftee, gifteeRecos, chosen.mal_id);
   if (dupe) {
     return respond.update({
-      content: dupe,
-      embeds: [],
+      content: dupe, embeds: [],
       components: [row(btn('ax:reco_again', '🔍 Search again', Style.PRIMARY))],
     });
   }
-  const slot = nextOpenSlot(gifteeRecos);
-  if (!slot) {
+  if (picksLeft(giftee, gifteeRecos) <= 0) {
     return respond.update({
-      content: `↻ All your picks for **${giftee.display_name}** are already sent — nothing to do.`,
+      content: `↻ **${giftee.display_name}** already has all **${giftee.max_recos}** picks — nothing sent.`,
       embeds: [], components: [],
     });
   }
+  const slot = Math.max(0, ...gifteeRecos.map((r) => r.slot)) + 1;
   bg(c, async () => {
-    const res = await c.env.DB.prepare(
-      `UPDATE recos SET mal_id = ?1, title = ?2, title_en = ?3, year = ?4, type = ?5, episodes = ?6,
-         url = ?7, image = ?8, status = 'PENDING', final_via = NULL, updated_at = ?9
-       WHERE reco_id = ?10 AND status = 'NONE'`,
-    ).bind(
-      chosen.mal_id, chosen.title, chosen.title_en, chosen.year, chosen.type, chosen.episodes,
-      chosen.url, chosen.image, now(), slot.reco_id,
-    ).run();
-    if ((res.meta.changes ?? 0) === 0) {
+    // The count guard is re-checked inside the write window by re-reading the
+    // giftee's rows; the UNIQUE(signup_id, slot) index makes a double-click
+    // collide instead of inserting twice.
+    const fresh = await c.env.DB
+      .prepare('SELECT * FROM recos WHERE signup_id = ?1 ORDER BY slot').bind(giftee.signup_id)
+      .all<RecoRow>();
+    if (picksLeft(giftee, fresh.results) <= 0) {
       await editOriginal(c.env, c.i.token, {
-        content: `↻ That slot was already filled — press **🎯 Recommend an anime** again if you still owe a pick.`,
+        content: `↻ **${giftee.display_name}** already has all **${giftee.max_recos}** picks — nothing sent.`,
         embeds: [], components: [],
       });
       return;
     }
+    let inserted;
+    try {
+      inserted = await c.env.DB.prepare(
+        `INSERT INTO recos (event_id, signup_id, slot, mal_id, title, title_en, year, type,
+           episodes, url, image, status, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING', ?12, ?12)
+         RETURNING *`,
+      ).bind(
+        e.event_id, giftee.signup_id, slot, chosen.mal_id, chosen.title, chosen.title_en,
+        chosen.year, chosen.type, chosen.episodes, chosen.url, chosen.image, now(),
+      ).first<RecoRow>();
+    } catch {
+      await editOriginal(c.env, c.i.token, {
+        content: '↻ That pick was already sent — check your mission panel.', embeds: [], components: [],
+      });
+      return;
+    }
+    if (!inserted) return;
     await deleteDraft(c, e.event_id);
-    const fresh: RecoRow = {
-      ...slot,
-      mal_id: chosen.mal_id, title: chosen.title, title_en: chosen.title_en,
-      year: chosen.year, type: chosen.type, episodes: chosen.episodes,
-      url: chosen.url, image: chosen.image, status: 'PENDING', final_via: null,
-    };
+
     let deliveryNote = '';
     if (giftee.thread_id) {
-      await postMessage(c.env, giftee.thread_id, recoCard(e, giftee, fresh)).catch((err) => {
-        console.error('reco card post failed', err);
-        deliveryNote = '\n⚠ Couldn\'t reach their thread — let your event manager know.';
-      });
+      const msg = await postMessage(c.env, giftee.thread_id, recoCard(e, giftee, inserted))
+        .catch((err) => {
+          console.error('reco card post failed', err);
+          deliveryNote = '\n⚠ Couldn\'t reach their thread — let your event manager know.';
+          return null;
+        });
+      if (msg) {
+        await c.env.DB.prepare('UPDATE recos SET msg_id = ?1 WHERE reco_id = ?2')
+          .bind(msg.id, inserted.reco_id).run();
+      }
     } else {
       deliveryNote = '\n⚠ They have no thread — let your event manager know.';
     }
     const items = await getItems(c.env, e.event_id);
-    await writeRecoCells(c.env, c.guild, e, items, giftee, fresh).catch((err) => {
+    await writeRecoCells(c.env, c.guild, e, items, giftee).catch((err) => {
       console.error('reco cells write failed (heals at launch)', err);
     });
-    await maybeMilestoneRepaint(c, e, 'send');
-    const stillOwed = openCount(gifteeRecos) - 1;
+    await refreshPanel(c, e, me.signup_id);
+    await refreshPanel(c, e, giftee.signup_id);
+    await milestoneRepaint(c, e);
     await editOriginal(c.env, c.i.token, {
-      content:
-        `📨 Sent **${candLabel(chosen)}** to **${giftee.display_name}**! ` +
-        (stillOwed > 0
-          ? `**${stillOwed}** more pick(s) to go — press **🎯 Recommend another**.`
-          : `You'll get a ping in your thread when they reply.`) +
-        deliveryNote,
-      embeds: [],
-      components: stillOwed > 0
-        ? [row(btn(`ax:reco:${c.userId}`, '🎯 Recommend another', Style.PRIMARY))]
-        : [],
+      content: `📨 Sent **${candLabel(chosen)}** to **${giftee.display_name}**!${deliveryNote}`,
+      embeds: [], components: [],
     });
   });
   return respond.deferUpdate();
@@ -370,22 +394,21 @@ export async function recoSend(c: HCtx): Promise<Response> {
 
 // ------------------------------------------------------- approve / decline
 
-/** Resolve the reco a button refers to; falls back to the single pending one. */
-function targetReco(myRecos: RecoRow[], recoArg: string): RecoRow | undefined {
-  const id = Number(recoArg);
-  if (Number.isFinite(id) && id > 0) return myRecos.find((r) => r.reco_id === id);
-  return myRecos.find((r) => r.status === 'PENDING');
-}
+const findReco = (rows: RecoRow[], arg: string): RecoRow | undefined => {
+  const id = Number(arg);
+  return Number.isFinite(id) && id > 0 ? rows.find((r) => r.reco_id === id) : undefined;
+};
 
-/** [Thank you!😊] — accepts one pick on the clicker's own row. */
+/** [Thank you!😊] — accepts one pick; the card is removed and the accepted
+ *  anime shows up in the status panel instead. */
 export async function recoApprove(c: HCtx, ownerArg: string, recoArg: string): Promise<Response> {
   const owned = ownedBy(c, ownerArg);
   if (owned) return owned;
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
-  const { e, me, santa, myRecos, giftee, gifteeRecos } = ctx;
-  const target = targetReco(myRecos, recoArg);
-  if (!target) {
+  const { e, me, santa, myRecos } = ctx;
+  const target = findReco(myRecos, recoArg) ?? pendingRecos(myRecos)[0];
+  if (!target || target.status !== 'PENDING') {
     return respond.ephemeral({ content: '↻ That pick is no longer waiting for a reply.' });
   }
   bg(c, async () => {
@@ -393,181 +416,180 @@ export async function recoApprove(c: HCtx, ownerArg: string, recoArg: string): P
       "UPDATE recos SET status = 'FINAL', final_via = 'APPROVED', updated_at = ?1 WHERE reco_id = ?2 AND status = 'PENDING'",
     ).bind(now(), target.reco_id).run();
     if ((res.meta.changes ?? 0) === 0) {
-      // Lost a race (double-click / launch sweep) — show the fresh truth.
-      await editOriginal(c.env, c.i.token, statusPayload(e, me, giftee, myRecos, gifteeRecos)).catch(() => {});
+      await refreshPanel(c, e, me.signup_id);
       return;
     }
     const fresh: RecoRow = { ...target, status: 'FINAL', final_via: 'APPROVED' };
-    // The clicked message (thread card or reminder) becomes the accepted card.
-    await editOriginal(c.env, c.i.token, { ...recoCard(e, me, fresh), content: '' }).catch(() => {});
+    await removeCard(c, me, fresh);
     if (santa.signup_id !== me.signup_id && santa.thread_id) {
-      await postMessage(c.env, santa.thread_id,
-        lockedNotice(santa, me, fresh.title ?? '?', openCount(myRecos))).catch((err) => {
-        console.error('locked notice post failed', err);
-      });
+      await postMessage(c.env, santa.thread_id, answerNotice(santa, me, fresh))
+        .catch((err) => console.error('answer notice post failed', err));
     }
     const items = await getItems(c.env, e.event_id);
-    await writeRecoCells(c.env, c.guild, e, items, me, fresh).catch(() => {});
-    await maybeMilestoneRepaint(c, e, 'approve');
+    await writeRecoCells(c.env, c.guild, e, items, me).catch(() => {});
+    await refreshPanel(c, e, me.signup_id);
+    await refreshPanel(c, e, santa.signup_id);
+    await milestoneRepaint(c, e);
   });
   return respond.deferUpdate();
 }
 
+/** Delete an answered pick card (the status panel carries the outcome). */
+async function removeCard(c: HCtx, giftee: SignupRow, reco: RecoRow): Promise<void> {
+  if (!giftee.thread_id || !reco.msg_id) return;
+  await deleteMessage(c.env, giftee.thread_id, reco.msg_id)
+    .catch((err) => console.error('pick card cleanup failed', err));
+}
+
 /**
- * [Sorry😞] on a pending pick, or [I changed my mind to decline it😞] on an
- * accepted one — Thank you is reversible until Launch. Either way it consumes
- * one decline from the per-person budget and re-opens that slot.
+ * [Sorry😞] on a pending pick, and the engine behind the status panel's
+ * "I'll change my mind😞" for accepted ones. Spends one decline from the
+ * per-person budget and frees a slot for the Santa.
  */
+async function declineReco(c: HCtx, ctx: RecoCtx, target: RecoRow, viaPanel: boolean): Promise<void> {
+  const { e, me, santa } = ctx;
+  // Spend the budget first, conditionally — that single UPDATE is what keeps
+  // concurrent declines (several pending cards, double-clicks) inside the
+  // budget. If the pick then turns out to be gone, the budget is handed back.
+  const spend = await c.env.DB.prepare(
+    'UPDATE signups SET declines_used = declines_used + 1, updated_at = ?1 WHERE signup_id = ?2 AND declines_used < ?3',
+  ).bind(now(), me.signup_id, e.max_declines).run();
+  if ((spend.meta.changes ?? 0) === 0) {
+    await editOriginal(c.env, c.i.token, {
+      content: '🔒 You have no Sorry😞s left — this pick stays.', embeds: [], components: [],
+    }).catch(() => {});
+    return;
+  }
+  // The state subquery closes the launch race: once the event leaves
+  // RECOMMENDING nothing can be sent back any more.
+  const res = await c.env.DB.prepare(
+    `UPDATE recos SET status = 'DECLINED', final_via = NULL, score = NULL, updated_at = ?1
+     WHERE reco_id = ?2 AND status IN ('PENDING', 'FINAL')
+       AND (SELECT state FROM events WHERE events.event_id = recos.event_id) = 'RECOMMENDING'`,
+  ).bind(now(), target.reco_id).run();
+  if ((res.meta.changes ?? 0) === 0) {
+    await c.env.DB.prepare('UPDATE signups SET declines_used = declines_used - 1 WHERE signup_id = ?1 AND declines_used > 0')
+      .bind(me.signup_id).run();
+    await refreshPanel(c, e, me.signup_id);
+    await editOriginal(c.env, c.i.token, {
+      content: '↻ That pick already moved on — your status panel is up to date.', embeds: [], components: [],
+    }).catch(() => {});
+    return;
+  }
+  const declined: RecoRow = { ...target, status: 'DECLINED', final_via: null, score: null };
+  const left = Math.max(0, e.max_declines - (me.declines_used + 1));
+  const note = `😞 You sent **${animeLabel(declined)}** back — ` +
+    (left > 0 ? `**${left}** Sorry😞${left > 1 ? 's' : ''} left.` : `that was your last Sorry😞.`);
+  if (viaPanel) {
+    await editOriginal(c.env, c.i.token, { content: note, embeds: [], components: [] }).catch(() => {});
+    await removeCard(c, me, declined);
+  } else {
+    // The clicked pick card becomes the one-line note.
+    await editOriginal(c.env, c.i.token, { content: note, embeds: [], components: [] }).catch(() => {});
+    await c.env.DB.prepare('UPDATE recos SET msg_id = NULL WHERE reco_id = ?1').bind(target.reco_id).run();
+  }
+  // Budget exhausted → the Sorry buttons on any other pending card are now
+  // lies; re-render those cards so they match reality.
+  if (left === 0) await refreshSiblingCards(c, e, me, target.reco_id);
+
+  if (santa.signup_id !== me.signup_id && santa.thread_id) {
+    await postMessage(c.env, santa.thread_id, answerNotice(santa, me, declined))
+      .catch((err) => console.error('answer notice post failed', err));
+  }
+  const items = await getItems(c.env, e.event_id);
+  await writeRecoCells(c.env, c.guild, e, items, me).catch(() => {});
+  await refreshPanel(c, e, me.signup_id);
+  await refreshPanel(c, e, santa.signup_id);
+  await throttledCountRepaint(c, e.event_id);
+}
+
+/** Re-render the giftee's other pending pick cards (budget/state changed). */
+async function refreshSiblingCards(
+  c: HCtx, e: EventRow, giftee: SignupRow, exceptRecoId: number,
+): Promise<void> {
+  if (!giftee.thread_id) return;
+  const rows = await c.env.DB
+    .prepare("SELECT * FROM recos WHERE signup_id = ?1 AND status = 'PENDING' AND msg_id IS NOT NULL")
+    .bind(giftee.signup_id).all<RecoRow>();
+  const spent: SignupRow = { ...giftee, declines_used: e.max_declines };
+  for (const r of rows.results) {
+    if (r.reco_id === exceptRecoId) continue;
+    await editMessage(c.env, giftee.thread_id, r.msg_id!, recoCard(e, spent, r))
+      .catch((err) => console.error('sibling card refresh failed', err));
+  }
+}
+
 export async function recoDecline(c: HCtx, ownerArg: string, recoArg: string): Promise<Response> {
   const owned = ownedBy(c, ownerArg);
   if (owned) return owned;
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
-  const { e, me, santa, myRecos, giftee, gifteeRecos } = ctx;
+  const { e, me, myRecos } = ctx;
   if (me.declines_used >= e.max_declines) {
     return respond.ephemeral({ content: '🔒 You have no Sorry😞s left — you can\'t send this one back.' });
   }
-  const target = targetReco(myRecos, recoArg);
-  if (!target || target.status === 'NONE') {
+  const target = findReco(myRecos, recoArg) ?? pendingRecos(myRecos)[0];
+  if (!target || target.status === 'DECLINED') {
     return respond.ephemeral({ content: '↻ That pick is no longer yours to decline.' });
   }
-  bg(c, async () => {
-    // Spend the budget first, conditionally — that single UPDATE is what makes
-    // concurrent declines (two slots at once, double-clicks) safe. If the pick
-    // then turns out to be gone, the budget is handed back.
-    const spend = await c.env.DB.prepare(
-      'UPDATE signups SET declines_used = declines_used + 1, updated_at = ?1 WHERE signup_id = ?2 AND declines_used < ?3',
-    ).bind(now(), me.signup_id, e.max_declines).run();
-    if ((spend.meta.changes ?? 0) === 0) {
-      await editOriginal(c.env, c.i.token, {
-        content: '🔒 You have no Sorry😞s left — this pick stays.', embeds: [], components: [],
-      }).catch(() => {});
-      return;
-    }
-    const declinedTitle = target.title ?? '?';
-    // The state subquery closes the launch race: once the event leaves
-    // RECOMMENDING, no decline can land (an accepted pick is final by then).
-    const res = await c.env.DB.prepare(
-      `UPDATE recos SET status = 'NONE', final_via = NULL, mal_id = NULL, title = NULL,
-         title_en = NULL, year = NULL, type = NULL, episodes = NULL, url = NULL, image = NULL,
-         score = NULL, updated_at = ?1
-       WHERE reco_id = ?2
-         AND (status = 'PENDING' OR (status = 'FINAL' AND final_via = 'APPROVED'))
-         AND (SELECT state FROM events WHERE events.event_id = recos.event_id) = 'RECOMMENDING'`,
-    ).bind(now(), target.reco_id).run();
-    if ((res.meta.changes ?? 0) === 0) {
-      await c.env.DB.prepare('UPDATE signups SET declines_used = declines_used - 1 WHERE signup_id = ?1 AND declines_used > 0')
-        .bind(me.signup_id).run();
-      await editOriginal(c.env, c.i.token, statusPayload(e, me, giftee, myRecos, gifteeRecos)).catch(() => {});
-      return;
-    }
-    const declinedJson = JSON.stringify([
-      ...declinedOf(me),
-      ...(target.mal_id !== null ? [{ mal_id: target.mal_id, title: declinedTitle }] : []),
-    ]);
-    await c.env.DB.prepare('UPDATE signups SET reco_declined_json = ?1 WHERE signup_id = ?2')
-      .bind(declinedJson, me.signup_id).run();
-
-    const freshMe: SignupRow = {
-      ...me, declines_used: me.declines_used + 1, reco_declined_json: declinedJson,
-    };
-    const freshReco: RecoRow = {
-      ...target, status: 'NONE', final_via: null, mal_id: null, title: null, title_en: null,
-      year: null, type: null, episodes: null, url: null, image: null, score: null,
-    };
-    const left = Math.max(0, e.max_declines - freshMe.declines_used);
-    await editOriginal(c.env, c.i.token, {
-      content: '',
-      embeds: [embed({
-        title: `😞 You sent ${declinedTitle} back`,
-        description:
-          `Your Secret Santa is choosing another pick — you'll get a ping when it arrives.\n` +
-          (left > 0
-            ? `You can decline **${left}** more time(s).`
-            : `That was your last Sorry😞 — you won't be able to send the next one back.`),
-      })],
-      components: [],
-    }).catch(() => {});
-    if (santa.signup_id !== me.signup_id && santa.thread_id) {
-      // openCount is computed from the pre-decline snapshot, so +1 for this slot.
-      await postMessage(c.env, santa.thread_id,
-        declineNotice(santa, freshMe, declinedTitle, openCount(myRecos) + 1)).catch((err) => {
-        console.error('decline notice post failed', err);
-      });
-    }
-    const items = await getItems(c.env, e.event_id);
-    await writeRecoCells(c.env, c.guild, e, items, freshMe, freshReco).catch(() => {});
-    await throttledCountRepaint(c, e.event_id);
-  });
+  bg(c, () => declineReco(c, ctx, target, false));
   return respond.deferUpdate();
 }
 
-/** Repaint immediately at true milestones — the last slot being filled
- *  (Launch turns green) or the last pick being accepted — and throttled like
- *  the signup counter otherwise. */
-async function maybeMilestoneRepaint(c: HCtx, e: EventRow, kind: 'send' | 'approve'): Promise<void> {
+/** ["I'll change my mind😞"] → select which accepted anime to send back. */
+export async function recoUndoMenu(c: HCtx, ownerArg: string): Promise<Response> {
+  const owned = ownedBy(c, ownerArg);
+  if (owned) return owned;
+  const ctx = await recoCtxOf(c);
+  if (ctx instanceof Response) return ctx;
+  const { e, me, myRecos } = ctx;
+  if (me.declines_used >= e.max_declines) {
+    return respond.ephemeral({ content: '🔒 You have no Sorry😞s left — your picks stay as they are.' });
+  }
+  const accepted = finalRecos(myRecos);
+  if (accepted.length === 0) {
+    return respond.ephemeral({ content: 'You haven\'t accepted anything yet — nothing to take back.' });
+  }
+  return respond.ephemeral({
+    content: `😞 Which one should go back? Your Santa will pick a replacement. ` +
+      `(**${Math.max(0, e.max_declines - me.declines_used)}** Sorry😞 left.)`,
+    components: [row(stringSelect(`ax:reco_undo_pick:${me.user_id}`, 'Send one back…',
+      accepted.map((r) => ({ label: truncate(animeLabel(r), 100), value: String(r.reco_id) })),
+    ))],
+  });
+}
+
+export async function recoUndoPick(c: HCtx, ownerArg: string): Promise<Response> {
+  const owned = ownedBy(c, ownerArg);
+  if (owned) return owned;
+  const ctx = await recoCtxOf(c);
+  if (ctx instanceof Response) return ctx;
+  const target = findReco(ctx.myRecos, c.i.data?.values?.[0] ?? '');
+  if (!target || target.status !== 'FINAL') {
+    return respond.update({ content: '↻ That pick already moved on.', components: [] });
+  }
+  bg(c, () => declineReco(c, ctx, target, true));
+  return respond.deferUpdate();
+}
+
+/** Repaint the manager panel; instant when the phase becomes launch-ready. */
+async function milestoneRepaint(c: HCtx, e: EventRow): Promise<void> {
   const agg = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n,
-            COALESCE(SUM(CASE WHEN status = 'NONE' THEN 1 ELSE 0 END), 0) AS waiting,
-            COALESCE(SUM(CASE WHEN status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final
-     FROM recos WHERE event_id = ?1`,
-  ).bind(e.event_id).first<{ n: number; waiting: number; final: number }>();
-  const milestone = kind === 'send'
-    ? (agg?.waiting ?? 1) === 0
-    : (agg?.final ?? 0) === (agg?.n ?? -1);
-  if (milestone) await repaint(c);
+    `SELECT COUNT(*) AS n FROM signups s
+     WHERE s.event_id = ?1
+       AND NOT EXISTS (SELECT 1 FROM recos r WHERE r.signup_id = s.signup_id AND r.status != 'DECLINED')`,
+  ).bind(e.event_id).first<{ n: number }>();
+  if ((agg?.n ?? 1) === 0) await repaint(c);
   else await throttledCountRepaint(c, e.event_id);
 }
 
-// ---------------------------------------------------------------- My status
-
-function statusPayload(
-  e: EventRow, me: SignupRow, giftee: SignupRow, myRecos: RecoRow[], gifteeRecos: RecoRow[],
-): Record<string, unknown> {
-  const left = Math.max(0, e.max_declines - me.declines_used);
-  const owed = openCount(gifteeRecos);
-  const mission = giftee.signup_id === me.signup_id
-    ? null
-    : owed > 0
-      ? `🎯 **${giftee.display_name}** is waiting for **${owed}** more pick(s).\n` +
-        `Their list: ${giftee.list_url || '*not provided*'}`
-      : gifteeRecos.some((r) => r.status === 'PENDING')
-        ? `⏳ All picks sent to **${giftee.display_name}** — waiting for their reply.`
-        : `✅ **${giftee.display_name}** accepted all your picks.`;
-  const mineLines = myRecos.map((r) => {
-    const tag = e.max_recos > 1 ? `**${r.slot}.** ` : '';
-    if (r.status === 'FINAL') return `${tag}✅ **${r.title}**`;
-    if (r.status === 'PENDING') return `${tag}📬 **${r.title}** — waiting for your reply!`;
-    return `${tag}🎁 your Secret Santa is still choosing…`;
-  }).join('\n');
-  const buttons: unknown[] = [];
-  if (mission && owed > 0) {
-    buttons.push(btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
-  }
-  const firstPending = myRecos.find((r) => r.status === 'PENDING');
-  if (firstPending) {
-    buttons.push(btn(`ax:reco_ok:${me.user_id}:${firstPending.reco_id}`, 'Thank you!😊', Style.SUCCESS));
-    if (left > 0) buttons.push(btn(`ax:reco_no:${me.user_id}:${firstPending.reco_id}`, 'Sorry😞', Style.DANGER));
-    if (firstPending.url) buttons.push(linkBtn(firstPending.url, '🔗 View on MAL'));
-  }
-  return {
-    content: '',
-    embeds: [embed({
-      title: '🎯 Your exchange status',
-      description: [
-        mission ? `**Your mission**\n${mission}` : null,
-        `**Your anime**\n${mineLines || '—'}`,
-        `*(Sorry😞s left: **${left}**.)*`,
-      ].filter(Boolean).join('\n\n'),
-    })],
-    components: buttons.length ? [row(...buttons)] : [],
-  };
-}
-
-/** Legacy: the pre-3.2 participant panel had a 🎯 My Status button; stale
- *  clicks still get a useful answer. Threads are the primary status surface. */
+/** Legacy: the pre-3.2 participant panel had a 🎯 My Status button. */
 export async function recoStatusMe(c: HCtx): Promise<Response> {
   const ctx = await recoCtxOf(c);
   if (ctx instanceof Response) return ctx;
-  return respond.ephemeral(statusPayload(ctx.e, ctx.me, ctx.giftee, ctx.myRecos, ctx.gifteeRecos));
+  const items = await getItems(c.env, ctx.e.event_id);
+  return respond.ephemeral({
+    ...statusPanel(ctx.e, ctx.me, ctx.giftee, items, ctx.gifteeRecos, ctx.myRecos),
+    content: 'Your thread has this panel too:',
+  });
 }

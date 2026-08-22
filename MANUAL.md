@@ -3,8 +3,9 @@
 A secret-santa-style anime exchange for your Discord server — where the gifts
 are **hand-picked recommendations**. You sign up with a link to your
 MAL/AniList; the bot secretly matches everyone in loops. You study *your*
-person's list and recommend anime just for them (the manager sets how many —
-up to 5), while your own Secret Santa picks for you. Don't like the pick? Send it back with **Sorry😞**
+person's list and recommend anime just for them — **you decide how many you
+want to receive** (up to 5, a maximum, not a quota) — while your own Secret
+Santa picks for you. Don't like the pick? Send it back with **Sorry😞**
 (a limited number of times!). Once every pick is locked in, everyone watches
 their full season, writes a review in a Google Doc, and scores it out of 10.
 Who picked what for whom stays secret until the reveal at the end.
@@ -50,7 +51,8 @@ mission, their pick, reminders, and the reveal.
    somewhere else? The bot warns, but a red **⚠ Proceed anyway** lets you keep
    any link.) Answer the manager's questions (a second step appears if there
    are more than four).
-3. Review the **summary card** and press **✅ Confirm Sign-Up**.
+3. On the **summary card**, choose **how many anime you want** (1–5 — your
+   Santa may send fewer, never more), then press **✅ Confirm Sign-Up**.
 
 Until sign-ups close you can press **📝 Sign Up/Edit** again to change your
 answers, or **🚪 Withdraw**. If you wander off mid-wizard, your progress is
@@ -66,46 +68,57 @@ When the manager starts the recommendation phase, a private thread named
 `🎁 {your name}` appears with your **mission card** — who you're the Secret
 Santa of, with their info as a simple list:
 
-> 🎯 You are the Secret Santa of **rabbit**
+> **🎯 You are the Secret Santa of rabbit**
 > 🎨 **Theme:** Nostalgia
-> Study rabbit's taste. Recommend **3** anime they'll love.
+> Study **rabbit**'s taste. Recommend **at most 3** anime they'll love — and
+> that fit the theme.
 > • **list:** https://myanimelist.net/profile/rabbit
 > • **favorite genre:** mecha
+>
+> 🎯 **Your recommendations** (1 approved / 3 at most)
+> • Sousou no Frieren (2023) — declined 😞
+> • Kaiba (2008) — approved 😊
 > ⏰ **Recommend by** {deadline}
-> They can send a pick back with Sorry😞. They don't know it's you. 🤫
+> They can send a pick back with Sorry😞. *They don't know it's you.* 🤫
+>
+> **🎁 Anime you approved**
+> **1.** ✅ Love Live! (2013) · TV · 13 episodes · MAL
+> Sorry😞s left: **1**
+>
+> `[🎯 Recommend an anime]` `[I'll change my mind😞]`
 
-(You never see how many declines they have left — pick with your heart.)
+This one panel is your whole status view, and it updates itself as things
+happen. (You never see how many declines *they* have left — pick with your
+heart.)
 
 Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
 both work — "frieren", "Sousou no Frieren" and 「葬送のフリーレン」 all find
-the same show), pick the right season from the results, and **📨 Send** it.
-If the event asks for several picks, the confirmation says how many are left
-and offers **🎯 Recommend another** — repeat until you're done. You can't
-pick the same show twice for the same person, or one they already declined.
+the same show), pick the right season, and **📨 Send** it. Repeat while the
+Recommend button is there — the number they asked for is a **maximum**, so
+stopping early is fine, and one accepted pick is all the exchange needs. You
+can't pick the same show twice for the same person, or one they declined.
 
-- If they decline, you get a ping with which titles they've already sent back
-  (you can't re-pick those) and how many picks you owe again.
+- If they decline, you get a ping and the panel shows what missed.
 - When they accept, you get a 🎉 ping.
 
 ### Your pick 🎁
 
 Each pick your Secret Santa sends arrives as its own card in your thread
-(cover, year, episodes, MAL link — labelled "pick 2 of 3" when there are
-several) with two buttons:
+(cover, year, episodes, MAL link) with two buttons:
 
-- **Thank you!😊** — accepts it. Accepting is **not** a hard lock: a red
-  **I changed my mind to decline it😞** button stays on the card, so you can
-  change your mind any time **until the manager launches** the event.
-- **Sorry😞** — sends it back and your Santa picks a replacement for that
-  slot. Declining (before *or* after accepting) spends one of your Sorry😞s;
-  the manager sets how many you get, and the budget covers **all** your picks
-  together. Once they're spent, the buttons to send picks back disappear.
+- **Thank you!😊** — accepts it. The card disappears and the anime moves into
+  the **🎁 Anime you approved** list on your status panel.
+- **Sorry😞** — sends it back and your Santa can pick again. Declining spends
+  one of your Sorry😞s; the manager sets how many you get, and the budget
+  covers all your picks together. Once they're spent, the decline buttons
+  disappear.
+
+Changed your mind about something you accepted? The status panel's
+**I'll change my mind😞** button lets you send an approved anime back (while
+you still have a Sorry😞 and until the manager launches).
 
 Picks that are still unanswered when the manager launches lock in
 automatically. At launch, everything is final.
-
-Your private thread is your status view — every card and ping about your
-mission and your pick lives there.
 
 ### The event itself
 
@@ -168,31 +181,27 @@ loop, one line per participant:
 **DRAFTING — build the sign-up form**
 - **⚙ Set Basics** — the **Session** (the event's name), an optional
   **Theme** (what picks should aim for — shown to everyone: panels, the
-  sign-up announcement, and the mission/pick cards), the sign-up deadline
-  (`YYYY-MM-DD HH:mm`), timezone (IANA, pre-filled `America/Chicago`), and
-  **Picks per person (1–5)**: how many anime each Secret Santa recommends
-  for their giftee. `1` is the classic one-gift exchange; `3` gives everyone
-  a small watchlist.
-- **😞 Declines: N** — a button on the panel: how many times each participant
-  may send a pick back. `0` means first pick = final; `1`–`2` is the sweet
-  spot for most groups. (It lives on the panel because the Set Basics modal
-  is full at Discord's five fields.)
-- **⏰ Auto-stop** — a toggle button on the panel (here and while sign-ups
-  are open): ON closes sign-ups automatically at the deadline.
-- **➕ Add Item / 🛠 Edit Items** — up to 9 custom questions, fill-in or
-  multiple-choice (2–10 options), each with an optional **description**
-  (helper text shown under the question on the sign-up form) and each
-  visible-to-recommender or hidden. The **MAL/AniList link is built-in** and
-  always first — you don't add it.
-- **📨 Open Sign-Ups** — requires basics + Google connected. Creates the
-  spreadsheet, opens the participant panel, and **pings @everyone** in
-  `#anime-exchange` that sign-ups are open.
+  sign-up announcement, and the mission/pick cards), the **default picks
+  wanted (1–5)** that the sign-up form starts from (each participant can
+  change it for themselves), and the **Sorry😞 budget (0–9)**: how many times
+  each participant may send a pick back. `0` means first pick = final;
+  `1`–`2` is the sweet spot for most groups.
+- **➕ Add Item / 🛠 Edit Items** — item **1** is the built-in MAL/AniList
+  link: it always comes first and stays a validated link, but you can reword
+  its label and description. Items 2+ are your own questions (up to 9),
+  fill-in or multiple-choice (2–10 options), each with an optional
+  description and each visible-to-recommender or hidden.
+- **📨 Open Sign-Ups** — asks for the **sign-up deadline and timezone**, then
+  confirms. Creates the spreadsheet, opens the participant panel, and
+  **pings @everyone** in `#anime-exchange`.
 - **🗑 Discard** deletes the draft.
 
 **SIGNUP_OPEN**
 - The panel shows the live count and links the sheet in its body (as every
   later state does — `Sheet: https://…`); **🔄 Refresh** updates the count
   instantly instead of waiting out the 1-minute throttle.
+- **⏰ Auto-stop** — a toggle here (and again during Recommending): ON closes
+  sign-ups automatically at the deadline.
 - If the deadline passes with auto-stop off, the participant panel shows
   "⏰ Deadline passed — still accepting until the manager closes sign-ups."
 - **⏸ Stop Sign-Ups** moves to Matching (reversible via Reopen).
@@ -227,13 +236,16 @@ their Santa mission card (who they pick for + that person's list link +
 👁-visible answers), about 5 per minute; the panel counts up and flips to
 RECOMMENDING by itself.
 
-**RECOMMENDING — the heart of v3.** The panel shows
-`accepted / awaiting reply / waiting on their Santa` counts live.
+**RECOMMENDING — the heart of the flow.** The panel counts **people**:
+how many participants have an accepted anime, how many owe a reply, and how
+many are still waiting on their Santa.
 
-- **🔄 Refresh** — updates those counts instantly. The per-pair detail (who
+- **🔄 Refresh** — updates those counts instantly. The per-person detail (who
   was picked what, ✅/⏳/😞 status, decline counts) lives in the sheet's
   **Recommendation / Rec. Status** columns — the sheet is linked in the
   panel body.
+- **⏰ Auto-stop** — ON locks every ⏳ pending pick at the recommendation
+  deadline, so the back-and-forth ends on time. Launching stays your call.
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
   haven't picked (or got declined and haven't re-picked), and giftees sitting
   on a pending pick. The nudge lands in their thread with the right buttons.
@@ -242,9 +254,9 @@ RECOMMENDING by itself.
   reused; old thread cards become stale (their buttons politely refuse).
 - **🚀 Launch** — set the review deadline, timezone, reminder days
   (default `7,3,1`), and optional DM mirroring; confirm. Launch only refuses
-  while some **Santa hasn't sent a pick at all**. Picks that are still
-  ⏳ awaiting a reply get locked in by the launch itself — the confirmation
-  warns you first with **‼️The pending picks will be locked**.
+  while someone **has no anime at all**. Picks that are still ⏳ awaiting a
+  reply get locked in by the launch itself — the confirmation warns you first
+  with **‼️The pending picks will be locked**.
 
 **LAUNCHING** — the bot creates one review doc per participant (for their
 locked-in anime) and posts the assignment card in their existing thread,
@@ -288,15 +300,17 @@ automatically if it drifts.
 | *your custom items* | bot | answers (🔒 marks hidden ones) |
 | **Group** | **you** (during Matching only) | loop membership — positive integer, blank = 1 |
 | Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
-| Recommendation *k* | bot | the anime this row's Santa picked for slot *k* (live during Recommending) |
-| Rec. Status *k* | bot | `⏳ awaiting reply` / `😞 declined ×k` / `✅ accepted` / `⏩ locked at launch` |
+| Recommendation *k* | bot | their *k*-th live pick (declined ones don't take a column) |
+| Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch`; the first empty column shows `😞 declined ×k` |
 | Score *k* | bot | the participant's ⭐/10 for that anime |
 | Review Link | bot | each participant's doc |
 | Review Length | bot | characters written beyond the template |
 
-With **Picks per person = 3** the Recommendation/Rec. Status/Score trio
-repeats three times (`Recommendation 1`, `Rec. Status 1`, `Score 1`,
-`Recommendation 2`, …). A single-pick event keeps the unnumbered headers.
+The Recommendation/Rec. Status/Score trio repeats as many times as the
+greediest participant asked for, numbered (`Recommendation 1`,
+`Rec. Status 1`, `Score 1`, `Recommendation 2`, …). If everyone wants a
+single anime, the headers stay unnumbered. Live picks always sit left-packed,
+so after launch each row reads cleanly from `Recommendation 1`.
 
 **Row order and the Group column are the only inputs, and only while the
 event is in Matching.** Once recommendations start, the assignment is locked
@@ -310,7 +324,7 @@ and the whole sheet is a dashboard.
 |---|---|
 | Sign-up count on the manager panel | instant when quiet; ≤ ~1–2 min during a burst |
 | Threads + Santa missions at Start Recommending | ~5 participants per minute |
-| Picks per person | 1–5, set in Set Basics before sign-ups open |
+| Picks per person | 1–5, chosen by each participant at sign-up |
 | Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
 | Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
 | Review docs + assignment cards at Launch | ~5 participants per minute |
@@ -333,9 +347,9 @@ your profile (`/profile/you`, `/user/you`) or your list (`/animelist/you`).
 The scheme is optional; the bot normalizes it. Other sites are rejected.
 
 **How many anime do I get / do I recommend?**
-Whatever the manager set (1–5, the same for everyone). The panels and your
-mission card both say the number, and your thread tracks progress like
-"2 of 3 picks sent".
+You choose your own maximum (1–5) at sign-up; your Santa sees it on their
+mission panel and may send fewer. You recommend for someone else up to *their*
+maximum.
 
 **I used up my Sorry😞s. Can I still decline?**
 No — declining (even of a pick you first accepted) spends the budget, which

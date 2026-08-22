@@ -59,6 +59,10 @@ export function editMessage(env: Env, channelId: string, messageId: string, payl
   return dapi(env, 'PATCH', `/channels/${channelId}/messages/${messageId}`, payload);
 }
 
+export function deleteMessage(env: Env, channelId: string, messageId: string): Promise<void> {
+  return dapi(env, 'DELETE', `/channels/${channelId}/messages/${messageId}`);
+}
+
 // ------------------------------------------------- interaction responses
 
 function json(payload: unknown): Response {

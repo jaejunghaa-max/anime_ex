@@ -4,10 +4,13 @@ import {
   parseReminderDays, sanitizeName, shuffled, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
-import { a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, slotCol } from '../src/sheet';
+import {
+  a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots, slotCol,
+} from '../src/sheet';
+import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
-import type { FormItem } from '../src/types';
+import type { FormItem, RecoRow } from '../src/types';
 
 describe('timezone conversion (Intl-based, no offset tables)', () => {
   it('converts Seoul wall time (no DST)', () => {
@@ -226,12 +229,40 @@ describe('sheet layout (§8.3)', () => {
     expect(recoCell({ title: 'Frieren', year: null })).toBe('Frieren');
     expect(recoCell({ title: null, year: null })).toBe('');
     expect(recoCell(undefined)).toBe('');
-    expect(recoStatusCell({ status: 'NONE', final_via: null })).toBe('');
-    expect(recoStatusCell({ status: 'NONE', final_via: null }, 2)).toBe('😞 declined ×2');
-    expect(recoStatusCell(undefined, 1)).toBe('😞 declined ×1');
+    expect(recoStatusCell(undefined)).toBe('');                    // empty slot
+    expect(recoStatusCell(undefined, 2)).toBe('😞 declined ×2');   // …after two take-backs
     expect(recoStatusCell({ status: 'PENDING', final_via: null })).toBe('⏳ awaiting reply');
     expect(recoStatusCell({ status: 'FINAL', final_via: 'APPROVED' }, 1)).toBe('✅ accepted');
     expect(recoStatusCell({ status: 'FINAL', final_via: 'FORCED' })).toBe('⏩ locked at launch');
+    expect(recoStatusCell({ status: 'DECLINED', final_via: null })).toBe('😞 declined');
+  });
+});
+
+describe('per-participant pick maxima (v5)', () => {
+  const reco = (over: Partial<RecoRow>): RecoRow => ({
+    reco_id: 1, event_id: 1, signup_id: 1, slot: 1, mal_id: 1, title: 'X', title_en: null,
+    year: 2020, type: 'TV', episodes: 12, url: null, image: null, status: 'PENDING',
+    final_via: null, score: null, msg_id: null, created_at: 0, updated_at: 0, ...over,
+  });
+  it('declined picks are history — they free the slot back up', () => {
+    const rows = [
+      reco({ reco_id: 1, slot: 1, status: 'DECLINED' }),
+      reco({ reco_id: 2, slot: 2, status: 'FINAL' }),
+      reco({ reco_id: 3, slot: 3, status: 'PENDING' }),
+    ];
+    expect(activeRecos(rows).map((r) => r.reco_id)).toEqual([2, 3]);
+    expect(finalRecos(rows).map((r) => r.reco_id)).toEqual([2]);
+    expect(pendingRecos(rows).map((r) => r.reco_id)).toEqual([3]);
+    expect(declinedRecos(rows).map((r) => r.reco_id)).toEqual([1]);
+    // Two live picks against a maximum of three leaves room for one more.
+    expect(picksLeft({ max_recos: 3 }, rows)).toBe(1);
+    expect(picksLeft({ max_recos: 2 }, rows)).toBe(0);
+    expect(picksLeft({ max_recos: 1 }, rows)).toBe(0);   // never negative
+  });
+  it('the sheet sizes its slot block to the greediest participant', () => {
+    expect(sheetSlots([{ max_recos: 1 }, { max_recos: 4 }, { max_recos: 2 }])).toBe(4);
+    expect(sheetSlots([])).toBe(1);
+    expect(sheetSlots([{ max_recos: 0 }])).toBe(1);      // guards bad data
   });
 });
 

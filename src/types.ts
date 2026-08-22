@@ -79,8 +79,14 @@ export interface EventRow {
   dm_mirror: number;
   /** v3: how many times each participant may "Sorry😞" a recommendation (0–9). */
   max_declines: number;
-  /** v4: how many anime each Secret Santa recommends for their giftee (1–5). */
+  /** v5: the default "picks I want" offered in the sign-up wizard (1–5) —
+   *  every participant may override it on their own row. */
   max_recos: number;
+  /** The @everyone sign-up announcement, so Abort can clean it up. */
+  announce_msg_id: string | null;
+  /** Manager-editable label/description of the built-in list-link item. */
+  link_label: string | null;
+  link_desc: string | null;
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
@@ -104,7 +110,9 @@ export interface FormItem {
   visible_to_recommender: number;
 }
 
-export type RecoStatus = 'NONE' | 'PENDING' | 'FINAL';
+/** DECLINED rows stay as history: the Santa sees what missed and can't
+ *  re-pick it. Only PENDING/FINAL rows count against the giftee's maximum. */
+export type RecoStatus = 'PENDING' | 'FINAL' | 'DECLINED';
 /** APPROVED = the giftee said Thank you (reversible until Launch);
  *  FORCED = still pending at Launch, locked by the launch sweep. */
 export type RecoFinalVia = 'APPROVED' | 'FORCED';
@@ -132,6 +140,8 @@ export interface RecoRow {
   final_via: RecoFinalVia | null;
   /** The giftee's /10 rating of this anime. */
   score: number | null;
+  /** The pick card in the giftee's thread, so it can be updated/removed. */
+  msg_id: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -145,6 +155,10 @@ export interface SignupRow {
   username: string;
   /** v3 built-in form item: link to the participant's MAL/AniList list. */
   list_url: string;
+  /** v5: how many anime this participant is willing to receive (1–5, a max). */
+  max_recos: number;
+  /** The consolidated status panel in their thread, edited in place. */
+  mission_msg_id: string | null;
   answers_json: string;
   row_order: number | null;
   group_no: number;

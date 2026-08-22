@@ -2,8 +2,9 @@
 
 A Discord bot that runs an **Anime Exchange**: every participant signs up with a
 link to their **MAL/AniList**, gets secretly matched to another participant, and
-**recommends anime tailored to them** (1–5 picks each, the manager's choice) —
-while their own Secret Santa picks for *them*. A pick can be sent back ("Sorry😞") up to a manager-set number of
+**recommends anime tailored to them** — each participant says at sign-up how
+many they want to receive (1–5, a maximum) — while their own Secret Santa
+picks for *them*. A pick can be sent back ("Sorry😞") up to a manager-set number of
 times; once every pick is locked in ("Thank you!😊"), the exchange launches:
 everyone watches their full season and writes a review in a Google Doc by a
 deadline. Matches form circular loops — one big loop over everyone by default,
@@ -41,19 +42,20 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 - **Preparing** (new batched job): each participant's private thread is created
   *now*, with a task card: who they're the Secret Santa of, that person's
   list link + 👁-visible answers, and a **🎯 Recommend an anime** button.
-- **Recommending** (new): the Santa fills their giftee's **slots** — one to
-  five picks, `events.max_recos`, set in Set Basics — via the MAL search
-  wizard (EN/JP re-ranking, same engine as v2's signup search). Each pick
-  lands in the giftee's thread as its own card with **[Thank you!😊]** /
-  **[Sorry😞]**. Accepting is reversible — a red **[I changed my mind to
-  decline it😞]** stays on the card until Launch. Declining (before or after
-  accepting) spends the per-person budget (**0–9**, set with the 😞 button at
-  drafting) shared across all slots; a declined title — or one already used in
-  another slot — can't be re-picked, a spent budget just removes the decline
-  buttons (nothing locks mid-phase), and the Santa never sees the remaining
-  count. Manager tools: 🔄 Refresh, 📣 Remind Now, ↩ Back to Matching (wipes
-  picks, keeps threads); the per-slot detail lives in the sheet, linked in
-  every panel body.
+- **Recommending**: each thread carries ONE consolidated status panel — the
+  Santa's mission (giftee, list, 👁 answers, their own send history with
+  ✅/⏳/😞 marks), the anime they themselves accepted, and their controls —
+  edited in place on every change. The Santa sends up to the giftee's own
+  maximum (`signups.max_recos`, 1–5) via the MAL search wizard; each pick
+  lands as a transient card with **[Thank you!😊]** / **[Sorry😞]**.
+  Accepting removes the card (the anime moves into the panel) and can still
+  be undone through the panel's **[I'll change my mind😞]** until Launch.
+  Declining spends the per-person budget (**0–9**, Set Basics), keeps the
+  title as un-re-pickable history, and re-opens a slot. Because the count is a
+  maximum, **one accepted pick per person is enough to launch**. Manager
+  tools: 🔄 Refresh, 📣 Remind Now, ⏰ Auto-stop (locks pending picks at the
+  recommendation deadline), ↩ Back to Matching; per-person detail lives in the
+  sheet, linked in every panel body.
 - **Launch onward**: identical to v2, except Launch refuses only while a Santa
   hasn't sent a pick, locks any still-pending picks itself (after a bold
   **‼️The pending picks will be locked** warning), creates review docs for the
@@ -129,7 +131,10 @@ npm run deploy
 > recommendation deadline). `0008` adds the `recos` table for multi-pick
 > events and moves the per-recommendation columns (and ⭐ score) off
 > `signups`; in-flight recommendations carry over as slot 1, so `max_recos`
-> defaults to 1 and existing events behave exactly as before.
+> defaults to 1 and existing events behave exactly as before. `0009` moves the
+> pick maximum onto each participant, turns declined picks into history rows
+> (`recos.status = DECLINED`) and adds the consolidated status panel's message
+> ids — in-flight picks carry over untouched.
 
 ### 3. Google Cloud OAuth client
 
@@ -164,14 +169,16 @@ Everything happens on the two pinned panels:
 
 1. **Connect Google** (manager panel) → **New Event** → **Set Basics**
    (**Session** name, optional **Theme** — shown to participants everywhere,
-   sign-up deadline, timezone, and **Picks per person (1–5)**; the Sorry😞
-   budget and auto-stop are 😞 / ⏰ buttons on the panel) → add up to 9 custom form items (fill-in or MCQ, optional
+   the **default picks wanted (1–5)** and the **Sorry😞 budget (0–9)**; the
+   sign-up deadline and timezone come with 📨 Open Sign-Ups, and auto-stop is
+   a ⏰ toggle on the sign-up and recommending panels) → add up to 9 custom form items (fill-in or MCQ, optional
    description shown under the question, each 👁 visible-to-recommender or 🔒
    hidden) → **Open Sign-Ups** (creates the spreadsheet in the manager's
    Drive and pings **@everyone** in the participant channel).
 2. Participants press **Sign Up/Edit** (one button for both): the built-in
    **MAL/AniList link** field + items 1–4, an optional second modal for items
-   5–9, then a summary card to confirm. Re-press to edit, or withdraw, any
+   5–9, then a summary card where they choose **how many anime they want
+   (1–5)** and confirm. Re-press to edit, or withdraw, any
    time while sign-ups are open.
 3. **Stop Sign-Ups** → arrange the loops → **Validate** → **🎯 Start
    Recommending**. The matching tools are unchanged from v2:
@@ -200,8 +207,8 @@ Everything happens on the two pinned panels:
    it😞** until Launch) or decline (**Sorry😞**, at most the drafted budget;
    declined titles can't be re-picked; a spent budget removes the decline
    buttons). The sheet's **Recommendation / Rec. Status** columns update live;
-   the panel shows `accepted / pending / not sent` counts over all slots
-   (participants × picks), refreshable on the spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
+   the panel counts **people** — with an accepted anime / owing a reply /
+   waiting on their Santa — refreshable on the spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
    who owe a pick + giftees who owe a reply) and **↩ Back to Matching** (wipes
    all picks; threads are reused later). **🚀 Launch** refuses only while some
    Santa hasn't sent a pick; ⏳ pending picks are locked by the launch itself

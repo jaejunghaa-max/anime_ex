@@ -78,12 +78,21 @@ export type RecoMap = Map<number, RecoRow[]>;
 
 export const recosOf = (map: RecoMap, signupId: number): RecoRow[] => map.get(signupId) ?? [];
 
-/** Slots whose pick is already sent (PENDING or FINAL), in slot order. */
-export const sentRecos = (rows: RecoRow[]): RecoRow[] => rows.filter((r) => r.status !== 'NONE');
+/** Live picks — everything not sent back, in send order. These count against
+ *  the giftee's "at most N" and are what they'll watch. */
+export const activeRecos = (rows: RecoRow[]): RecoRow[] =>
+  rows.filter((r) => r.status !== 'DECLINED');
 
-/** Titles of the slots that will be watched — everything sent, in slot order. */
-export const recoTitles = (rows: RecoRow[]): string[] =>
-  sentRecos(rows).map((r) => r.title ?? '?');
+/** Accepted (or launch-locked) picks only. */
+export const finalRecos = (rows: RecoRow[]): RecoRow[] => rows.filter((r) => r.status === 'FINAL');
+
+export const pendingRecos = (rows: RecoRow[]): RecoRow[] => rows.filter((r) => r.status === 'PENDING');
+
+export const declinedRecos = (rows: RecoRow[]): RecoRow[] => rows.filter((r) => r.status === 'DECLINED');
+
+/** How many more picks this participant's Santa may still send. */
+export const picksLeft = (giftee: { max_recos: number }, rows: RecoRow[]): number =>
+  Math.max(0, giftee.max_recos - activeRecos(rows).length);
 
 /**
  * Ordered rows + loop map + recommendation slots + this-user resolution in one

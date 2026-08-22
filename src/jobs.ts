@@ -6,10 +6,11 @@
 
 import type { Cfg, Env, EventRow, GuildRow, JobRow, RecoRow, SignupRow } from './types';
 import {
-  addThreadMember, createPrivateThread, deleteChannel, DiscordApiError, embed, postMessage,
+  addThreadMember, createPrivateThread, deleteChannel, deleteMessage, DiscordApiError, embed,
+  postMessage,
 } from './discord';
-import { getItems, loadRecos, orderedSignups, recosOf, sentRecos, transition } from './db';
-import { assignmentCard, revealCard, taskCard } from './cards';
+import { activeRecos, getItems, loadRecos, orderedSignups, recosOf, transition } from './db';
+import { animeLabel, assignmentCard, revealCard, statusPanel } from './cards';
 import {
   createDoc, docUrl, driveExportText, driveFileMeta, driveFlipAnyoneToReader, driveShareAnyone,
   GoogleApiError, GoogleAuthError, writeDocTemplate,
@@ -128,25 +129,19 @@ async function prepareTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow,
   }
 
   const items = await getItems(env, event.event_id);
+  const recos = await loadRecos(env, event.event_id);
   const stmts: D1PreparedStatement[] = [];
   for (const { s, idx } of pending) {
     // giftee = the row this participant recommends for (previous row in the loop).
     const giftee = all[loops.recipient[idx]!]!;
-    // Each participant's own slots are created here (idempotent via the
-    // UNIQUE(signup_id, slot) index) so counts are complete before picking.
-    const slotStmts: D1PreparedStatement[] = [];
-    for (let slot = 1; slot <= Math.max(1, event.max_recos); slot++) {
-      slotStmts.push(env.DB.prepare(
-        `INSERT OR IGNORE INTO recos (event_id, signup_id, slot, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?4)`,
-      ).bind(event.event_id, s.signup_id, slot, now()));
-    }
-    await env.DB.batch(slotStmts);
     const threadId = await ensureThread(env, guild, s);
-    await postMessage(env, threadId, taskCard(event, s, giftee, items));
+    // One consolidated status panel per thread, edited in place from here on.
+    const msg = await postMessage(env, threadId, statusPanel(
+      event, s, giftee, items, recosOf(recos, giftee.signup_id), recosOf(recos, s.signup_id),
+    ));
     stmts.push(env.DB.prepare(
-      'UPDATE signups SET reco_card_posted = 1, updated_at = ?1 WHERE signup_id = ?2',
-    ).bind(now(), s.signup_id));
+      'UPDATE signups SET reco_card_posted = 1, mission_msg_id = ?1, updated_at = ?2 WHERE signup_id = ?3',
+    ).bind(msg.id, now(), s.signup_id));
   }
   await env.DB.batch(stmts);
 
@@ -187,7 +182,7 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 
   for (const { s, idx } of pending) {
     const myGiftee = all[loops.recipient[idx]!]!;
-    const mine = sentRecos(recosOf(recos, s.signup_id));
+    const mine = activeRecos(recosOf(recos, s.signup_id));
     const titles = mine.map((r) => r.title ?? '?');
     // One doc per participant; with several picks it carries a section each.
     const docTitle = titles.length === 1
@@ -221,6 +216,13 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
     // Threads were created by the prepare job; ensure covers the rare case of
     // one being deleted mid-event.
     const threadId = await ensureThread(env, guild, s);
+    // The recommendation-phase status panel is history now; the assignment
+    // card takes over as the thread's live surface.
+    if (s.mission_msg_id) {
+      await deleteMessage(env, threadId, s.mission_msg_id).catch(() => {});
+      await env.DB.prepare('UPDATE signups SET mission_msg_id = NULL WHERE signup_id = ?1')
+        .bind(s.signup_id).run();
+    }
     await postMessage(env, threadId,
       assignmentCard(event, s, myGiftee, mine, recosOf(recos, myGiftee.signup_id)));
 
@@ -264,8 +266,8 @@ async function postGallery(
       const santa = all[loops.santa[i]!]!;
       // "J (@J) picked X (⭐8), Y for rabbit (@rabbit) (read review)"
       const link = s.doc_url ? ` ([read review](${s.doc_url}))` : '';
-      const picks = sentRecos(recosOf(recos, s.signup_id))
-        .map((r) => `**${r.title ?? '?'}**${r.score !== null ? ` (⭐ ${r.score})` : ''}`)
+      const picks = activeRecos(recosOf(recos, s.signup_id))
+        .map((r) => `**${animeLabel(r)}**${r.score !== null ? ` (⭐ ${r.score})` : ''}`)
         .join(', ') || '—';
       lines.push(
         `🎁 **${santa.display_name}** (<@${santa.user_id}>) picked ${picks} for ` +

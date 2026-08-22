@@ -16,10 +16,11 @@ export interface PanelStats {
   threadsLeft: number;
   /** Prepare-job progress: threads + Santa task cards delivered. */
   prepared: number;
-  /** Recommendation phase, counted over slots (participants × max_recos). */
-  recoTotal: number;
-  recoFinal: number;
+  /** Recommendation phase, counted in PEOPLE: with an accepted anime, owing a
+   *  reply, and still waiting on their Santa. */
+  recoAccepted: number;
   recoPending: number;
+  recoNothing: number;
   /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
   groupSizes: number[];
   lastSync: number | null;
@@ -30,7 +31,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   if (!event) {
     return {
       count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0,
-      prepared: 0, recoTotal: 0, recoFinal: 0, recoPending: 0, groupSizes: [],
+      prepared: 0, recoAccepted: 0, recoPending: 0, recoNothing: 0, groupSizes: [],
       lastSync: null, activeJob: null,
     };
   }
@@ -48,11 +49,12 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     threadsLeft: number; prepared: number;
   }>();
   const recoAgg = await env.DB.prepare(
-    `SELECT COUNT(*) AS total,
-            COALESCE(SUM(CASE WHEN status = 'FINAL' THEN 1 ELSE 0 END), 0) AS final,
-            COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0) AS pending
-     FROM recos WHERE event_id = ?1`,
-  ).bind(event.event_id).first<{ total: number; final: number; pending: number }>();
+    `SELECT
+       COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL') THEN 1 ELSE 0 END), 0) AS accepted,
+       COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS nothing
+     FROM signups s WHERE s.event_id = ?1`,
+  ).bind(event.event_id).first<{ accepted: number; pending: number; nothing: number }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -70,9 +72,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
     prepared: agg?.prepared ?? 0,
-    recoTotal: recoAgg?.total ?? 0,
-    recoFinal: recoAgg?.final ?? 0,
+    recoAccepted: recoAgg?.accepted ?? 0,
     recoPending: recoAgg?.pending ?? 0,
+    recoNothing: recoAgg?.nothing ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
@@ -139,16 +141,13 @@ export function renderManagerPanel(
 
   switch (e.state) {
     case 'DRAFTING': {
-      // The built-in list link is item 1; custom items number from 2.
+      // The built-in list link is item 1 (editable wording); customs from 2.
       const itemLines = [
-        '1. Link of your MAL/AniList — built-in — 👁 always visible to their Secret Santa',
+        `1. ${e.link_label || 'Link of your MAL/AniList'} — built-in — 👁 always visible to their Secret Santa`,
         ...items.map((it, i) =>
           `${i + 2}. ${it.label} — ${it.type === 'MCQ' ? `MCQ (${it.optionCount} options)` : 'fill-in'} — ${it.visible ? '👁 visible to your recommender' : '🔒 hidden'}`,
         ),
       ].join('\n');
-      const deadline = e.signup_deadline
-        ? `${ts(e.signup_deadline)} (${ts(e.signup_deadline, 'R')})`
-        : '*not set*';
       return {
         content: '',
         embeds: [embed({
@@ -156,18 +155,16 @@ export function renderManagerPanel(
           description:
             `**Session:** ${e.topic ?? '*not set*'}\n` +
             `**Theme:** ${e.theme ?? '*none*'}\n` +
-            `**Sign-up deadline:** ${deadline}\n` +
-            `**Timezone:** ${e.tz ?? '*not set*'} · **Auto-stop:** ${e.auto_stop ? 'on' : 'off'} (⏰ toggles it)\n` +
-            `**Picks per person:** **${e.max_recos}** · **Sorry😞 budget:** **${e.max_declines}** (😞 changes it)\n` +
-            `${googleLine(guild)}\n\n**Sign-up form** (up to 9 custom items):\n${itemLines}`,
+            `**Picks wanted (default):** at most **${e.max_recos}** — each participant picks their own at sign-up\n` +
+            `**Sorry😞 budget:** **${e.max_declines}** per person\n` +
+            `${googleLine(guild)}\n\n**Sign-up form**:\n${itemLines}\n\n` +
+            `*The sign-up deadline and timezone are set when you press 📨 Open Sign-Ups.*`,
         })],
         components: [
           row(
             btn('ax:basics', '⚙ Set Basics', Style.PRIMARY),
             btn('ax:item_add', '➕ Add Item'),
-            btn('ax:item_menu', '🛠 Edit Items', Style.SECONDARY, items.length === 0),
-            autostopBtn(e),
-            btn('ax:declines', `😞 Declines: ${e.max_declines}`),
+            btn('ax:item_menu', '🛠 Edit Items'),
           ),
           row(
             btn('ax:google', googleBtnLabel(guild)),
@@ -209,7 +206,7 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Flow: **1️⃣ Grouping** (split into loops) → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
+            `Flow: **1️⃣ Grouping** *(optional — only if you want several smaller loops)* → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
         })],
         components: [
           row(
@@ -237,13 +234,12 @@ export function renderManagerPanel(
       };
     }
     case 'RECOMMENDING': {
-      const waiting = Math.max(0, stats.recoTotal - stats.recoFinal - stats.recoPending);
-      const ready = waiting === 0 && stats.recoTotal > 0; // every slot is filled
+      const waiting = stats.recoNothing;
       const statusLine = waiting > 0
-        ? `🚀 Launch unlocks once every pick is sent — 📣 nudge the stragglers.`
+        ? `🚀 Launch unlocks once everyone has at least one pick — 📣 nudge the stragglers.`
         : stats.recoPending > 0
           ? `**‼️The pending picks will be locked** when you 🚀 Launch.`
-          : `✅ **Every pick is accepted — ready to 🚀 Launch.**`;
+          : `✅ **Everyone has an accepted anime — ready to 🚀 Launch.**`;
       const deadlineLine = e.reco_deadline
         ? `⏰ **Recommendation deadline:** ${ts(e.reco_deadline)} (${ts(e.reco_deadline, 'R')})` +
           `${e.reco_banner_flipped ? ' — **passed!** 📣 nudge or 🚀 Launch.' : ''}\n`
@@ -255,8 +251,8 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             deadlineLine +
-            `**${stats.recoFinal} / ${stats.recoTotal}** picks accepted · ⏳ **${stats.recoPending}** awaiting a reply · 🎁 **${waiting}** not sent yet\n` +
-            `**${stats.count}** participants × **${e.max_recos}** pick(s) each · everyone may send a pick back **${e.max_declines}** time(s), and accepted picks stay changeable until Launch.\n` +
+            `**${stats.recoAccepted} / ${stats.count}** participants accepted an anime · ⏳ **${stats.recoPending}** waiting to reply · 🎁 **${waiting}** waiting on their Santa\n` +
+            `Everyone chose their own maximum (1–5 picks) and may send a pick back **${e.max_declines}** time(s); accepted picks stay changeable until Launch.\n` +
             statusLine +
             `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],
@@ -264,10 +260,11 @@ export function renderManagerPanel(
           row(
             btn('ax:refresh', '🔄 Refresh'),
             btn('ax:remind', '📣 Remind Now'),
+            autostopBtn(e),
           ),
           row(
             btn('ax:back_matching', '↩ Back to Matching'),
-            btn('ax:launch', '🚀 Launch', ready ? Style.SUCCESS : Style.SECONDARY),
+            btn('ax:launch', '🚀 Launch', Style.SUCCESS),
             abortBtn(),
           ),
         ],
@@ -346,10 +343,10 @@ export function renderManagerPanel(
 
 // ------------------------------------------------------ participant panel
 
-const howItWorks = (maxDeclines: number, maxRecos: number): string =>
-  'Sign up with a link to your MAL/AniList. You’ll be secretly assigned another participant — ' +
-  `study their list and recommend ${maxRecos > 1 ? `**${maxRecos}** anime` : 'an anime'} just for them, ` +
-  `while your own Secret Santa picks ${maxRecos > 1 ? `${maxRecos} for you` : 'one for you'}. ` +
+const howItWorks = (maxDeclines: number): string =>
+  'Sign up with a link to your MAL/AniList and say how many anime you want (up to 5). ' +
+  'You’ll be secretly assigned another participant — study their list and recommend for them, ' +
+  'while your own Secret Santa picks for you. ' +
   (maxDeclines > 0
     ? `Not feeling a pick? Send it back with Sorry😞 (up to **${maxDeclines}** time${maxDeclines > 1 ? 's' : ''}). `
     : 'The pick you receive is final — trust your Santa. ') +
@@ -381,8 +378,8 @@ export function renderParticipantPanel(
           title: `${title} — ${e.topic}`,
           description:
             themeLine(e) +
-            `${howItWorks(e.max_declines, e.max_recos)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
-            `**Sign-up form:** your MAL/AniList link + ${itemCount} question(s)${banner}`,
+            `${howItWorks(e.max_declines)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
+            `**Sign-up form:** your ${e.link_label || 'MAL/AniList link'} + how many anime you want + ${itemCount} question(s)${banner}`,
         })],
         components: [row(
           btn('ax:signup', '📝 Sign Up/Edit', Style.PRIMARY),
@@ -417,14 +414,13 @@ export function renderParticipantPanel(
           title: `${title} — ${e.topic}`,
           description:
             themeLine(e) +
-            `🎯 **Recommendation time!** Pick **${e.max_recos}** anime for your person, and answer each pick you receive with **Thank you!😊** or **Sorry😞**` +
+            `🎯 **Recommendation time!** Pick anime for your person, and answer each pick you receive with **Thank you!😊** or **Sorry😞**` +
             `${e.max_declines > 0 ? ` (you can decline up to **${e.max_declines}** time${e.max_declines > 1 ? 's' : ''}, even after accepting — until launch)` : ''}.\n` +
             (e.reco_deadline
               ? `⏰ **Deadline:** ${ts(e.reco_deadline)} (${ts(e.reco_deadline, 'R')})` +
                 `${e.reco_banner_flipped ? ' — **passed, lock in those picks!**' : ''}\n`
               : '') +
-            `See your **private thread** to see your status.\n` +
-            `**${stats.recoFinal} / ${stats.recoTotal}** picks accepted so far.`,
+            `See your **private thread** to see your status.`,
         })],
         components: [],
       };

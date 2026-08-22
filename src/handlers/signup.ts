@@ -5,11 +5,11 @@
 // progress lives in signup_drafts because every modal/select is a separate
 // stateless interaction; drafts expire after 30 minutes.
 
-import type { DraftRow, FormItem } from '../types';
+import type { DraftRow, EventRow, FormItem } from '../types';
 import { modalFields } from '../types';
-import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
-import type { RecoRow } from '../types';
-import { answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups, sentRecos } from '../db';
+import { btn, editOriginal, embed, modalSelect, modalText, respond, row, stringSelect, Style } from '../discord';
+import type { RecoRow, SignupRow } from '../types';
+import { activeRecos, answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
 import { rewriteSheet, writeScoreCells } from '../sheet';
 import { normalizeListUrl, now, sanitizeName, truncate } from '../util';
 import { bg, HCtx, stale, throttledCountRepaint } from './common';
@@ -75,12 +75,16 @@ function itemComponent(it: FormItem, answers: Record<string, string>): Record<st
   return modalText(`item:${it.item_id}`, it.label, { paragraph: true, value: prev ?? '', max: 500, description });
 }
 
-function modalA(items: FormItem[], answers: Record<string, string>): Response {
+export const LINK_LABEL_DEFAULT = 'Link of your MAL/AniList';
+export const LINK_DESC_DEFAULT =
+  'N/A if you have none — your Secret Santa studies this to pick for you';
+
+function modalA(e: EventRow, items: FormItem[], answers: Record<string, string>): Response {
   return respond.modal('axm:signup_a', 'Sign up — step 1', [
-    modalText(LINK_KEY, 'Link of your MAL/AniList', {
+    modalText(LINK_KEY, e.link_label || LINK_LABEL_DEFAULT, {
       value: answers[LINK_KEY] ?? '', max: 300,
       placeholder: 'https://myanimelist.net/profile/you — or anilist.co/user/you',
-      description: 'N/A if you don\'t have one, but strongly recommended as your Secret Santa studies this list to pick your anime',
+      description: e.link_desc || LINK_DESC_DEFAULT,
     }),
     ...itemsA(items).map((it) => itemComponent(it, answers)),
   ]);
@@ -111,10 +115,16 @@ function collectAnswers(items: FormItem[], fields: Map<string, string>): Record<
 /** Answers to prefill the wizard with: draft first, else the stored signup. */
 function prefillAnswers(
   draft: DraftRow | null,
-  existing: { answers_json: string; list_url: string } | null,
+  existing: SignupRow | null,
 ): Record<string, string> {
   if (draft) return parseJson<Record<string, string>>(draft.partial_answers_json, {});
-  if (existing) return { ...answersOf(existing), [LINK_KEY]: existing.list_url };
+  if (existing) {
+    return {
+      ...answersOf(existing),
+      [LINK_KEY]: existing.list_url,
+      [PICKS_KEY]: String(existing.max_recos),
+    };
+  }
   return {};
 }
 
@@ -137,7 +147,7 @@ export async function signupStart(c: HCtx): Promise<Response> {
   }
   const items = await getItems(c.env, e.event_id);
   const draft = await loadDraft(c, e.event_id);
-  return modalA(items, prefillAnswers(draft, existing));
+  return modalA(e, items, prefillAnswers(draft, existing));
 }
 
 /**
@@ -179,11 +189,11 @@ export async function signupModalA(c: HCtx): Promise<Response> {
   }
   answers[LINK_KEY] = link;
   await saveDraft(c, e.event_id, { step: 'A_DONE', partial_answers_json: JSON.stringify(answers) });
-  return reply(nextStep(items, answers));
+  return reply(nextStep(e, items, answers));
 }
 
 /** After step 1 is stored: the Continue (2/2) prompt, or straight to summary. */
-function nextStep(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
+function nextStep(e: EventRow, items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
   if (itemsB(items).length > 0) {
     return {
       content: `🔗 List saved — one more step for the remaining questions.`,
@@ -194,7 +204,7 @@ function nextStep(items: FormItem[], answers: Record<string, string>): Record<st
       )],
     };
   }
-  return summaryCard(items, answers);
+  return summaryCard(e, items, answers);
 }
 
 /** [⚠ Proceed anyway] — keep the non-MAL/AniList link exactly as typed. */
@@ -207,7 +217,7 @@ export async function signupForce(c: HCtx): Promise<Response> {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
   const items = await getItems(c.env, e.event_id);
-  return respond.update(nextStep(items, answers));
+  return respond.update(nextStep(e, items, answers));
 }
 
 /** [Continue (2/2)] → Modal B prefilled. */
@@ -241,7 +251,7 @@ export async function signupModalB(c: HCtx): Promise<Response> {
     ...collectAnswers(itemsB(items), modalFields(c.i.data?.components)),
   };
   await saveDraft(c, e.event_id, { ...draft, step: 'B_DONE', partial_answers_json: JSON.stringify(answers) });
-  return respond.update(summaryCard(items, answers));
+  return respond.update(summaryCard(e, items, answers));
 }
 
 /** [✏ Fix my sign-up / Back to step 1] → Modal A with previous values prefilled. */
@@ -251,7 +261,7 @@ export async function signupAgain(c: HCtx): Promise<Response> {
   const draft = await loadDraft(c, e.event_id);
   const existing = await getSignup(c.env, e.event_id, c.userId);
   const items = await getItems(c.env, e.event_id);
-  return modalA(items, prefillAnswers(draft, existing));
+  return modalA(e, items, prefillAnswers(draft, existing));
 }
 
 /** [↺ Start Over] → wipe the draft → blank Modal A. */
@@ -260,28 +270,65 @@ export async function signupRestart(c: HCtx): Promise<Response> {
   if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
   await deleteDraft(c, e.event_id);
   const items = await getItems(c.env, e.event_id);
-  return modalA(items, {});
+  return modalA(e, items, {});
 }
 
-function summaryCard(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
+// How many anime the participant is willing to receive — their own call,
+// travelling through the wizard next to the answers.
+const PICKS_KEY = 'picks';
+
+const picksOf = (answers: Record<string, string>, fallback: number): number => {
+  const n = parseInt(answers[PICKS_KEY] ?? '', 10);
+  return n >= 1 && n <= 5 ? n : Math.min(5, Math.max(1, fallback));
+};
+
+function summaryCard(
+  e: EventRow, items: FormItem[], answers: Record<string, string>,
+): Record<string, unknown> {
   const link = answers[LINK_KEY] ?? '—';
   const offSite = link !== '—' && !normalizeListUrl(link) ? ' ⚠ *(not a MAL/AniList link)*' : '';
+  const picks = picksOf(answers, e.max_recos);
   return {
     content: 'Almost done — confirm your sign-up:',
     embeds: [embed({
       title: '📝 Your sign-up',
-      description: `**Your list:** ${link}${offSite}\n*Your Secret Santa studies this to pick your anime.*`,
+      description:
+        `**Your list:** ${link}${offSite}\n*Your Secret Santa studies this to pick your anime.*\n\n` +
+        `**Anime you want:** at most **${picks}** — your Secret Santa may send fewer.`,
       fields: items.map((it) => ({
         name: `${it.label}${it.visible_to_recommender ? ' 👁' : ' 🔒'}`,
         value: answers[String(it.item_id)] || '—',
       })),
       footer: '👁 = shown to your Secret Santa when they pick for you',
     })],
-    components: [row(
-      btn('ax:signup_confirm', '✅ Confirm Sign-Up', Style.SUCCESS),
-      btn('ax:signup_restart', '↺ Start Over'),
-    )],
+    components: [
+      row(stringSelect('ax:signup_picks', 'How many anime do you want?',
+        [1, 2, 3, 4, 5].map((n) => ({
+          label: n === 1 ? '1 anime' : `up to ${n} anime`,
+          value: String(n),
+          default: n === picks,
+        })))),
+      row(
+        btn('ax:signup_confirm', '✅ Confirm Sign-Up', Style.SUCCESS),
+        btn('ax:signup_restart', '↺ Start Over'),
+      ),
+    ],
   };
+}
+
+/** The picks select under the summary card. */
+export async function signupPicks(c: HCtx): Promise<Response> {
+  const e = c.event;
+  if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
+  const draft = await loadDraft(c, e.event_id);
+  if (!draft) {
+    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
+  }
+  const answers = parseJson<Record<string, string>>(draft.partial_answers_json, {});
+  answers[PICKS_KEY] = c.i.data?.values?.[0] ?? String(e.max_recos);
+  await saveDraft(c, e.event_id, { ...draft, partial_answers_json: JSON.stringify(answers) });
+  const items = await getItems(c.env, e.event_id);
+  return respond.update(summaryCard(e, items, answers));
 }
 
 /** [✅ Confirm Sign-Up] → upsert signup + sheet row + throttled panel count. */
@@ -296,8 +343,10 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   if (!draft || !link) {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
+  const picks = picksOf(answers, e.max_recos);
   const itemAnswers = { ...answers };
   delete itemAnswers[LINK_KEY];
+  delete itemAnswers[PICKS_KEY];
   const username = sanitizeName(c.i.member?.user.username ?? '', 40);
   bg(c, async () => {
     const existing = await getSignup(c.env, e.event_id, c.userId);
@@ -312,13 +361,15 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
       }
     }
     await c.env.DB.prepare(
-      `INSERT INTO signups (event_id, user_id, display_name, username, list_url, answers_json, created_at, updated_at)
-       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+      `INSERT INTO signups (event_id, user_id, display_name, username, list_url, max_recos,
+         answers_json, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
        ON CONFLICT(event_id, user_id) DO UPDATE SET
          display_name = excluded.display_name, username = excluded.username,
-         list_url = excluded.list_url,
+         list_url = excluded.list_url, max_recos = excluded.max_recos,
          answers_json = excluded.answers_json, updated_at = excluded.updated_at`,
-    ).bind(e.event_id, c.userId, c.displayName, username, link, JSON.stringify(itemAnswers), now()).run();
+    ).bind(e.event_id, c.userId, c.displayName, username, link, picks,
+      JSON.stringify(itemAnswers), now()).run();
     await deleteDraft(c, e.event_id);
 
     let sheetNote = '';
@@ -332,7 +383,9 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
     }
     await throttledCountRepaint(c, e.event_id);
     await editOriginal(c.env, c.i.token, {
-      content: `🎉 **You're in!** Your Secret Santa will recommend an anime for you. You can update your sign-up or withdraw until sign-ups close.${sheetNote}`,
+      content:
+        `🎉 **You're in!** Your Secret Santa will recommend ${picks > 1 ? `up to **${picks}** anime` : 'an anime'} for you. ` +
+        `You can update your sign-up or withdraw until sign-ups close.${sheetNote}`,
       embeds: [], components: [],
     });
   });
@@ -351,7 +404,7 @@ async function myRecos(c: HCtx, eventId: number, signupId: number): Promise<Reco
   const res = await c.env.DB
     .prepare('SELECT * FROM recos WHERE event_id = ?1 AND signup_id = ?2 ORDER BY slot')
     .bind(eventId, signupId).all<RecoRow>();
-  return sentRecos(res.results);
+  return activeRecos(res.results);
 }
 
 export async function scoreModal(c: HCtx): Promise<Response> {
@@ -410,7 +463,9 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
     if (me.row_order !== null) {
       // Best-effort sheet cells; a job's self-heal rewrite fixes any failure.
       const items = await getItems(c.env, e.event_id);
-      await writeScoreCells(c.env, c.guild, e, items, me.row_order, updates).catch((err) => {
+      // Scores sit in the live-pick columns, so pass the full ordered list.
+      const live = await myRecos(c, e.event_id, me.signup_id);
+      await writeScoreCells(c.env, c.guild, e, items, me.row_order, live, Math.max(me.max_recos, live.length)).catch((err) => {
         console.error('score cell write failed (self-heal will fix)', err);
       });
     }

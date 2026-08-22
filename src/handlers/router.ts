@@ -17,6 +17,7 @@ const PARTICIPANT_ACTIONS = new Set([
   'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart', 'signup_force',
   'edit_signup', 'withdraw', 'score', 'cancel',
   'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no', 'reco_me',
+  'reco_undo', 'reco_undo_pick', 'signup_picks',
 ]);
 const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score', 'reco_kw']);
 
@@ -74,6 +75,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
   if (isModal) {
     switch (action) {
       case 'basics': return mgr.basicsSubmit(c);
+      case 'open': return mgr.openSignupsSubmit(c);
       case 'item': return mgr.itemSubmit(c, arg);
       case 'grouping': return mgr.groupingSubmit(c);
       case 'reco_start': return mgr.recoStartSubmit(c);
@@ -95,8 +97,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     // DRAFTING
     case 'basics': return mgr.basicsModal(c);
     case 'autostop': return mgr.autostopToggle(c);
-    case 'declines': return mgr.declinesMenu(c);
-    case 'declines_set': return mgr.declinesSet(c);
     case 'item_add': return mgr.itemAdd(c);
     case 'item_menu': return mgr.itemMenu(c);
     case 'item_pick': return mgr.itemPick(c);
@@ -139,6 +139,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_force': return su.signupForce(c);
+    case 'signup_picks': return su.signupPicks(c);
     case 'signup_confirm': return su.signupConfirm(c);
     case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
@@ -149,6 +150,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'reco_send': return reco.recoSend(c);
     case 'reco_ok': return reco.recoApprove(c, arg, arg2);
     case 'reco_no': return reco.recoDecline(c, arg, arg2);
+    case 'reco_undo': return reco.recoUndoMenu(c, arg);
+    case 'reco_undo_pick': return reco.recoUndoPick(c, arg);
     case 'reco_me': return reco.recoStatusMe(c);
     default:
       return stale(c, 'This control is from an older version of the panel.');
