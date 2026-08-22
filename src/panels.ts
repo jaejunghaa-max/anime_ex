@@ -52,9 +52,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     `SELECT
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL') THEN 1 ELSE 0 END), 0) AS accepted,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
-       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS nothing
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting
      FROM signups s WHERE s.event_id = ?1`,
-  ).bind(event.event_id).first<{ accepted: number; pending: number; nothing: number }>();
+  ).bind(event.event_id).first<{ accepted: number; pending: number; awaiting: number }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -74,7 +74,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     prepared: agg?.prepared ?? 0,
     recoAccepted: recoAgg?.accepted ?? 0,
     recoPending: recoAgg?.pending ?? 0,
-    recoNothing: recoAgg?.nothing ?? 0,
+    recoNothing: recoAgg?.awaiting ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,

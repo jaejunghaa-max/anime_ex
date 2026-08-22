@@ -63,12 +63,12 @@ async function peopleCounts(c: HCtx, eventId: number): Promise<{
     `SELECT COUNT(*) AS total,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL') THEN 1 ELSE 0 END), 0) AS accepted,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
-       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS nothing
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting
      FROM signups s WHERE s.event_id = ?1`,
-  ).bind(eventId).first<{ total: number; accepted: number; pending: number; nothing: number }>();
+  ).bind(eventId).first<{ total: number; accepted: number; pending: number; awaiting: number }>();
   return {
     total: r?.total ?? 0, accepted: r?.accepted ?? 0,
-    pending: r?.pending ?? 0, nothing: r?.nothing ?? 0,
+    pending: r?.pending ?? 0, nothing: r?.awaiting ?? 0,
   };
 }
 
