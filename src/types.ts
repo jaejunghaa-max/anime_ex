@@ -79,8 +79,7 @@ export interface EventRow {
   dm_mirror: number;
   /** v3: how many times each participant may "Sorry😞" a recommendation (0–9). */
   max_declines: number;
-  /** v5: the default "picks I want" offered in the sign-up wizard (1–5) —
-   *  every participant may override it on their own row. */
+  /** Unused since v6 — the pick maximum is the recipient's own choice. */
   max_recos: number;
   /** The @everyone sign-up announcement, so Abort can clean it up. */
   announce_msg_id: string | null;
@@ -142,6 +141,17 @@ export interface RecoRow {
   score: number | null;
   /** The pick card in the giftee's thread, so it can be updated/removed. */
   msg_id: string | null;
+  // v6: every accepted anime gets its own review doc.
+  doc_id: string | null;
+  doc_url: string | null;
+  perm_id: string | null;
+  template_chars: number;
+  doc_missing: number;
+  doc_readonly: number;
+  wrote: number;
+  char_count: number;
+  last_edited: number | null;
+  synced_at: number | null;
   created_at: number;
   updated_at: number;
 }
@@ -155,7 +165,7 @@ export interface SignupRow {
   username: string;
   /** v3 built-in form item: link to the participant's MAL/AniList list. */
   list_url: string;
-  /** v5: how many anime this participant is willing to receive (1–5, a max). */
+  /** v6: how many anime this participant is willing to receive (1–3, a max). */
   max_recos: number;
   /** The consolidated status panel in their thread, edited in place. */
   mission_msg_id: string | null;
@@ -167,6 +177,7 @@ export interface SignupRow {
   reco_declined_json: string;
   reco_card_posted: number;
   thread_id: string | null;
+  // Deprecated since v6 (docs live on `recos`); kept so old rows still read.
   doc_id: string | null;
   doc_url: string | null;
   perm_id: string | null;

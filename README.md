@@ -3,7 +3,7 @@
 A Discord bot that runs an **Anime Exchange**: every participant signs up with a
 link to their **MAL/AniList**, gets secretly matched to another participant, and
 **recommends anime tailored to them** — each participant says at sign-up how
-many they want to receive (1–5, a maximum) — while their own Secret Santa
+many they want to receive (1–3, a maximum) — while their own Secret Santa
 picks for *them*. A pick can be sent back ("Sorry😞") up to a manager-set number of
 times; once every pick is locked in ("Thank you!😊"), the exchange launches:
 everyone watches their full season and writes a review in a Google Doc by a
@@ -35,7 +35,8 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 - **Signup**: no anime search anymore. The form's built-in item is
   **"Link of your MAL/AniList"** (validated; `myanimelist.net` / `anilist.co`,
   with a red **⚠ Proceed anyway** escape hatch for lists hosted elsewhere),
-  plus up to 9 custom items (each with an optional description).
+  plus up to 8 custom items (each with an optional description). The form's
+  **first** field is **how many anime you want (1–3)** — a maximum, not a quota.
 - **Matching** (unchanged tools): 🧩 Grouping, 🔀 Shuffle, manual row-reorder +
   Group column in the sheet, ✅ Validate. Instead of Launch, the manager presses
   **🎯 Start Recommending** — assignments lock.
@@ -44,9 +45,9 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
   list link + 👁-visible answers, and a **🎯 Recommend an anime** button.
 - **Recommending**: each thread carries ONE consolidated status panel — the
   Santa's mission (giftee, list, 👁 answers, their own send history with
-  ✅/⏳/😞 marks), the anime they themselves accepted, and their controls —
-  edited in place on every change. The Santa sends up to the giftee's own
-  maximum (`signups.max_recos`, 1–5) via the MAL search wizard; each pick
+  ✅/⏳/😞 marks), the anime they themselves accepted, and their controls, all
+  in ONE embed — edited in place on every change. The Santa sends up to the
+  giftee's own maximum (`signups.max_recos`, 1–3) via the MAL search wizard; each pick
   lands as a transient card with **[Thank you!😊]** / **[Sorry😞]**.
   Accepting removes the card (the anime moves into the panel) and can still
   be undone through the panel's **[I'll change my mind😞]** until Launch.
@@ -58,8 +59,9 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
   sheet, linked in every panel body.
 - **Launch onward**: identical to v2, except Launch refuses only while a Santa
   hasn't sent a pick, locks any still-pending picks itself (after a bold
-  **‼️The pending picks will be locked** warning), creates review docs for the
-  final picks, posts the assignment card into the already-existing thread, and
+  **‼️The pending picks will be locked** warning), creates **one review doc per
+  accepted anime** (not per participant), posts the assignment card into the
+  already-existing thread, and
   the reveal/gallery show who picked for whom. Closing always posts the
   gallery.
 
@@ -134,7 +136,11 @@ npm run deploy
 > defaults to 1 and existing events behave exactly as before. `0009` moves the
 > pick maximum onto each participant, turns declined picks into history rows
 > (`recos.status = DECLINED`) and adds the consolidated status panel's message
-> ids — in-flight picks carry over untouched.
+> ids — in-flight picks carry over untouched. `0010` moves the review-doc
+> columns from `signups` onto `recos` (one doc per anime) and caps every pick
+> maximum at **3**: an already-launched participant's doc becomes the doc of
+> their first live pick, and the launch job creates the missing ones on its
+> next tick.
 
 ### 3. Google Cloud OAuth client
 
@@ -168,18 +174,18 @@ pins one panel message in each. `/setup repair` re-creates anything missing.
 Everything happens on the two pinned panels:
 
 1. **Connect Google** (manager panel) → **New Event** → **Set Basics**
-   (**Session** name, optional **Theme** — shown to participants everywhere,
-   the **default picks wanted (1–5)** and the **Sorry😞 budget (0–9)**; the
-   sign-up deadline and timezone come with 📨 Open Sign-Ups, and auto-stop is
-   a ⏰ toggle on the sign-up and recommending panels) → add up to 9 custom form items (fill-in or MCQ, optional
+   (**Session** name, optional **Theme** — shown to participants everywhere —
+   and the **Sorry😞 budget (0–9)**; how many anime each person wants is
+   entirely their own call at sign-up, the sign-up deadline and timezone come
+   with 📨 Open Sign-Ups, and auto-stop is a ⏰ toggle on the sign-up and
+   recommending panels) → add up to 8 custom form items (fill-in or MCQ, optional
    description shown under the question, each 👁 visible-to-recommender or 🔒
    hidden) → **Open Sign-Ups** (creates the spreadsheet in the manager's
    Drive and pings **@everyone** in the participant channel).
-2. Participants press **Sign Up/Edit** (one button for both): the built-in
-   **MAL/AniList link** field + items 1–4, an optional second modal for items
-   5–9, then a summary card where they choose **how many anime they want
-   (1–5)** and confirm. Re-press to edit, or withdraw, any
-   time while sign-ups are open.
+2. Participants press **Sign Up/Edit** (one button for both): **how many anime
+   you want (1–3)** first, then the built-in **MAL/AniList link** field and
+   items 1–3, an optional second modal for items 4–8, then a summary card to
+   confirm. Re-press to edit, or withdraw, any time while sign-ups are open.
 3. **Stop Sign-Ups** → arrange the loops → **Validate** → **🎯 Start
    Recommending**. The matching tools are unchanged from v2:
    - **🧩 Grouping** (step 1) splits everyone into G random loops of
@@ -207,29 +213,31 @@ Everything happens on the two pinned panels:
    it😞** until Launch) or decline (**Sorry😞**, at most the drafted budget;
    declined titles can't be re-picked; a spent budget removes the decline
    buttons). The sheet's **Recommendation / Rec. Status** columns update live;
-   the panel counts **people** — with an accepted anime / owing a reply /
-   waiting on their Santa — refreshable on the spot with **🔄 Refresh**. Manager levers: **📣 Remind Now** (nudges Santas
+   the panel shows both totals — **participants** with an accepted anime and
+   **picks** accepted out of everything asked for — and **🔄 Refresh** queues a
+   repaint. Manager levers: **📣 Remind Now** (nudges Santas
    who owe a pick + giftees who owe a reply) and **↩ Back to Matching** (wipes
    all picks; threads are reused later). **🚀 Launch** refuses only while some
    Santa hasn't sent a pick; ⏳ pending picks are locked by the launch itself
    after a bold **‼️The pending picks will be locked** warning.
-5. Launch runs as a batched job: per participant **one** review doc for their
-   final anime (`Review of {Anime} by {name}`, or `Reviews by {name} —
-   {Session}` with an H2 section per pick when there are several; header
-   "given to `Display(@username)`", anyone-with-link **editor**), and an
-   assignment card in their existing thread — their own pick recap (giftee +
-   list link) on top, their anime below, doc link + **⭐ Score it /10**
-   buttons last. The panel counts up and flips to RUNNING by itself.
+5. Launch runs as a batched job: **one review doc per accepted anime**
+   (`Review of {Anime} by {name}`; header "given to `Display(@username)`",
+   anyone-with-link **editor**), then an assignment card in their existing
+   thread — their own pick recap (giftee + list link) on top, their anime
+   below, one doc link button per anime + **⭐ Score it /10** last. The panel
+   counts up and flips to RUNNING by itself.
 6. During RUNNING: wrote-detection every 30 minutes and on every **🔄 Refresh**
-   click (chars written beyond the doc template; the sheet — linked from the
-   panel at all times — shows a **Review Length** column), progress panel,
+   click (chars written beyond each doc's template; the sheet — linked from the
+   panel at all times — carries a **Review Link** + **Review Length** pair per
+   pick), progress panel,
    scheduled reminders (thread ping, optional DM mirror), **Remind Now** for
    laggards, scoring out of 10 until Close.
 7. **Close Reviews**: one confirm — final status sync, all docs flip to
    anyone-with-link **viewer** *before* any reveal link is posted, then reveal
    cards — "your Secret Santa was X, they picked Y for you"; unscored reviews
-   read "didn't score your pick" — plus the public gallery (always posted),
-   one line per participant, per loop.
+   read "didn't score your pick", and every anime carries its own
+   **(read review)** link — plus the public gallery (always posted), one line
+   per participant, per loop.
 8. **Finish**: deletes threads and the bot's event data, then re-posts fresh
    IDLE panels at the bottom of both channels (Abort does the same). **The
    sheet and docs stay in the manager's Drive** — nothing to export.

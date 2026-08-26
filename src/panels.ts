@@ -5,6 +5,7 @@
 import type { Cfg, Env, EventRow, GuildRow, JobRow } from './types';
 import { btn, dapi, editMessage, embed, pinMessage, postMessage, row, Style } from './discord';
 import { isConnected, sheetUrl } from './google';
+import { MAX_PICKS } from './sheet';
 import { loopsPhrase, ts } from './util';
 
 export interface PanelStats {
@@ -21,6 +22,10 @@ export interface PanelStats {
   recoAccepted: number;
   recoPending: number;
   recoNothing: number;
+  /** Recommendation phase, counted in PICKS: accepted anime, and the total
+   *  everyone asked for (the sum of each participant's own maximum). */
+  picksAccepted: number;
+  picksWanted: number;
   /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
   groupSizes: number[];
   lastSync: number | null;
@@ -31,30 +36,38 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   if (!event) {
     return {
       count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0,
-      prepared: 0, recoAccepted: 0, recoPending: 0, recoNothing: 0, groupSizes: [],
+      prepared: 0, recoAccepted: 0, recoPending: 0, recoNothing: 0,
+      picksAccepted: 0, picksWanted: 0, groupSizes: [],
       lastSync: null, activeJob: null,
     };
   }
   const agg = await env.DB.prepare(
     `SELECT COUNT(*) AS count,
             COALESCE(SUM(assignment_posted), 0) AS launched,
-            COALESCE(SUM(doc_readonly), 0) AS flipped,
             COALESCE(SUM(reveal_posted), 0) AS revealed,
             COALESCE(SUM(wrote), 0) AS started,
             COALESCE(SUM(CASE WHEN thread_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS threadsLeft,
             COALESCE(SUM(reco_card_posted), 0) AS prepared
      FROM signups WHERE event_id = ?1`,
   ).bind(event.event_id).first<{
-    count: number; launched: number; flipped: number; revealed: number; started: number;
+    count: number; launched: number; revealed: number; started: number;
     threadsLeft: number; prepared: number;
   }>();
   const recoAgg = await env.DB.prepare(
     `SELECT
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL') THEN 1 ELSE 0 END), 0) AS accepted,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
-       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting,
+       COALESCE(SUM((SELECT COUNT(*) FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL')), 0) AS picks,
+       COALESCE(SUM(s.max_recos), 0) AS wanted,
+       -- Docs live on recos (v6): someone counts as flipped once EVERY one of
+       -- their live picks is read-only.
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED' AND x.doc_readonly = 0) THEN 1 ELSE 0 END), 0) AS flipped
      FROM signups s WHERE s.event_id = ?1`,
-  ).bind(event.event_id).first<{ accepted: number; pending: number; awaiting: number }>();
+  ).bind(event.event_id).first<{
+    accepted: number; pending: number; awaiting: number; picks: number; wanted: number;
+    flipped: number;
+  }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -67,7 +80,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   return {
     count: agg?.count ?? 0,
     launched: agg?.launched ?? 0,
-    flipped: agg?.flipped ?? 0,
+    flipped: recoAgg?.flipped ?? 0,
     revealed: agg?.revealed ?? 0,
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
@@ -75,6 +88,8 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     recoAccepted: recoAgg?.accepted ?? 0,
     recoPending: recoAgg?.pending ?? 0,
     recoNothing: recoAgg?.awaiting ?? 0,
+    picksAccepted: recoAgg?.picks ?? 0,
+    picksWanted: recoAgg?.wanted ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
@@ -155,7 +170,6 @@ export function renderManagerPanel(
           description:
             `**Session:** ${e.topic ?? '*not set*'}\n` +
             `**Theme:** ${e.theme ?? '*none*'}\n` +
-            `**Picks wanted (default):** at most **${e.max_recos}** — each participant picks their own at sign-up\n` +
             `**Sorry😞 budget:** **${e.max_declines}** per person\n` +
             `${googleLine(guild)}\n\n**Sign-up form**:\n${itemLines}\n\n` +
             `*The sign-up deadline and timezone are set when you press 📨 Open Sign-Ups.*`,
@@ -251,8 +265,9 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             deadlineLine +
-            `**${stats.recoAccepted} / ${stats.count}** participants accepted an anime · ⏳ **${stats.recoPending}** waiting to reply · 🎁 **${waiting}** waiting on their Santa\n` +
-            `Everyone chose their own maximum (1–5 picks) and may send a pick back **${e.max_declines}** time(s); accepted picks stay changeable until Launch.\n` +
+            `**${stats.recoAccepted} / ${stats.count}** participants accepted an anime · ` +
+            `**${stats.picksAccepted} / ${stats.picksWanted}** picks accepted\n` +
+            `Everyone chose their own maximum (1–${MAX_PICKS} picks) and may send a pick back **${e.max_declines}** time(s); accepted picks stay changeable until Launch.\n` +
             statusLine +
             `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],
@@ -344,7 +359,7 @@ export function renderManagerPanel(
 // ------------------------------------------------------ participant panel
 
 const howItWorks = (maxDeclines: number): string =>
-  'Sign up with a link to your MAL/AniList and say how many anime you want (up to 5). ' +
+  `Sign up with a link to your MAL/AniList and say how many anime you want (up to ${MAX_PICKS}). ` +
   'You’ll be secretly assigned another participant — study their list and recommend for them, ' +
   'while your own Secret Santa picks for you. ' +
   (maxDeclines > 0

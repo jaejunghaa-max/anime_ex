@@ -4,7 +4,7 @@ A secret-santa-style anime exchange for your Discord server — where the gifts
 are **hand-picked recommendations**. You sign up with a link to your
 MAL/AniList; the bot secretly matches everyone in loops. You study *your*
 person's list and recommend anime just for them — **you decide how many you
-want to receive** (up to 5, a maximum, not a quota) — while your own Secret
+want to receive** (up to 3, a maximum, not a quota) — while your own Secret
 Santa picks for you. Don't like the pick? Send it back with **Sorry😞**
 (a limited number of times!). Once every pick is locked in, everyone watches
 their full season, writes a review in a Google Doc, and scores it out of 10.
@@ -44,15 +44,16 @@ mission, their pick, reminders, and the reveal.
 
 1. Press **📝 Sign Up/Edit** on the pinned panel while sign-ups are open —
    the same button updates an existing sign-up (the form comes pre-filled).
-2. Fill in the built-in **"Link of your MAL/AniList"** field — e.g.
+2. The form's **first** field is **"How many anime do you want?" (1–3)** —
+   a maximum, entirely your call; your Santa may send fewer, never more.
+3. Fill in the built-in **"Link of your MAL/AniList"** field — e.g.
    `https://myanimelist.net/profile/you`, `https://myanimelist.net/animelist/you`
    or `https://anilist.co/user/you`. This is what your Secret Santa studies to
    pick your anime, so a public, up-to-date list gets you better gifts. (List
    somewhere else? The bot warns, but a red **⚠ Proceed anyway** lets you keep
    any link.) Answer the manager's questions (a second step appears if there
-   are more than four).
-3. On the **summary card**, choose **how many anime you want** (1–5 — your
-   Santa may send fewer, never more), then press **✅ Confirm Sign-Up**.
+   are more than three).
+4. Check the **summary card** and press **✅ Confirm Sign-Up**.
 
 Until sign-ups close you can press **📝 Sign Up/Edit** again to change your
 answers, or **🚪 Withdraw**. If you wander off mid-wizard, your progress is
@@ -81,14 +82,15 @@ Santa of, with their info as a simple list:
 > ⏰ **Recommend by** {deadline}
 > They can send a pick back with Sorry😞. *They don't know it's you.* 🤫
 >
-> **🎁 Anime you approved**
+>
+> 🎁 **Anime you approved**
 > **1.** ✅ Love Live! (2013) · TV · 13 episodes · MAL
 > Sorry😞s left: **1**
 >
 > `[🎯 Recommend an anime]` `[I'll change my mind😞]`
 
-This one panel is your whole status view, and it updates itself as things
-happen. (You never see how many declines *they* have left — pick with your
+Mission and approvals live in the **same** panel — one embed, your whole
+status view, updating itself as things happen. (You never see how many declines *they* have left — pick with your
 heart.)
 
 Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
@@ -129,9 +131,9 @@ Once the picking is done, the manager launches. Your thread gets the
   MAL/AniList link.
 - **Your anime** — below it: everything picked for you. Watch the full season
   of each. *Who picked them stays secret until the reveal.*
-- **📝 Open your review doc** — your personal Google Doc, with one section per
-  anime. Write your reviews there any time before the deadline. The link lives
-  on this card permanently.
+- **📝 Open your review doc** — **one Google Doc per anime**, so several picks
+  mean several buttons (`📝 Review: {title}`). Write each review any time
+  before the deadline; the links live on this card permanently.
 - **⭐ Score it /10** — rate each anime (1–10) in one form; leave any at
   "— no score —" and come back later. Changeable until reviews close.
 
@@ -147,9 +149,9 @@ your thread gets the reveal card:
 > Your Secret Santa was **J** (@J) — they picked **Sousou no Frieren**,
 > **Bocchi the Rock!** for you.
 >
-> **rabbit** (@rabbit) rated your picks ([read review](…))
-> • **Kaijuu 8-gou** — ⭐ 8/10
-> • **Dandadan** — ⭐ 7/10
+> **rabbit** (@rabbit) rated your picks
+> • **Kaijuu 8-gou** — ⭐ 8/10 ([read review](…))
+> • **Dandadan** — ⭐ 7/10 ([read review](…))
 >
 > (…or "didn't score your picks" if they never rated any.)
 
@@ -181,14 +183,14 @@ loop, one line per participant:
 **DRAFTING — build the sign-up form**
 - **⚙ Set Basics** — the **Session** (the event's name), an optional
   **Theme** (what picks should aim for — shown to everyone: panels, the
-  sign-up announcement, and the mission/pick cards), the **default picks
-  wanted (1–5)** that the sign-up form starts from (each participant can
-  change it for themselves), and the **Sorry😞 budget (0–9)**: how many times
-  each participant may send a pick back. `0` means first pick = final;
-  `1`–`2` is the sweet spot for most groups.
+  sign-up announcement, and the mission/pick cards), and the **Sorry😞 budget
+  (0–9)**: how many times each participant may send a pick back. `0` means
+  first pick = final; `1`–`2` is the sweet spot for most groups. How many
+  anime each person wants is **not** yours to set — it's their own choice at
+  sign-up (1–3).
 - **➕ Add Item / 🛠 Edit Items** — item **1** is the built-in MAL/AniList
   link: it always comes first and stays a validated link, but you can reword
-  its label and description. Items 2+ are your own questions (up to 9),
+  its label and description. Items 2+ are your own questions (up to 8),
   fill-in or multiple-choice (2–10 options), each with an optional
   description and each visible-to-recommender or hidden.
 - **📨 Open Sign-Ups** — asks for the **sign-up deadline and timezone**, then
@@ -236,14 +238,14 @@ their Santa mission card (who they pick for + that person's list link +
 👁-visible answers), about 5 per minute; the panel counts up and flips to
 RECOMMENDING by itself.
 
-**RECOMMENDING — the heart of the flow.** The panel counts **people**:
-how many participants have an accepted anime, how many owe a reply, and how
-many are still waiting on their Santa.
+**RECOMMENDING — the heart of the flow.** The panel shows both totals: how
+many **participants** have an accepted anime, and how many **picks** are
+accepted out of everything people asked for.
 
-- **🔄 Refresh** — updates those counts instantly. The per-person detail (who
-  was picked what, ✅/⏳/😞 status, decline counts) lives in the sheet's
-  **Recommendation / Rec. Status** columns — the sheet is linked in the
-  panel body.
+- **🔄 Refresh** — queues a repaint; the panel and sheet update within a
+  minute or two. The per-person detail (who was picked what, ✅/⏳/😞 status,
+  decline counts) lives in the sheet's **Recommendation / Rec. Status**
+  columns — the sheet is linked in the panel body.
 - **⏰ Auto-stop** — ON locks every ⏳ pending pick at the recommendation
   deadline, so the back-and-forth ends on time. Launching stays your call.
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
@@ -258,14 +260,14 @@ many are still waiting on their Santa.
   reply get locked in by the launch itself — the confirmation warns you first
   with **‼️The pending picks will be locked**.
 
-**LAUNCHING** — the bot creates one review doc per participant (for their
-locked-in anime) and posts the assignment card in their existing thread,
-about 5 per minute; the panel counts up and flips to RUNNING by itself.
+**LAUNCHING** — the bot creates **one review doc per accepted anime** and then
+posts the assignment card in each existing thread, about 5 per minute; the
+panel counts up and flips to RUNNING by itself.
 Redeploys or crashes lose nothing — it resumes where it left off.
 
 **RUNNING**
-- The panel body links the sheet — the detail view (per-participant Review
-  Length, Score, `⚠ missing` flags).
+- The panel body links the sheet — the detail view (per-anime Review Link and
+  Review Length, Score, `⚠ missing` flags).
 - **🔄 Refresh** — queues a status refresh; the panel and sheet update within
   a minute or two. Status also refreshes on its own every 30 minutes.
 - **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
@@ -303,13 +305,13 @@ automatically if it drifts.
 | Recommendation *k* | bot | their *k*-th live pick (declined ones don't take a column) |
 | Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch`; the first empty column shows `😞 declined ×k` |
 | Score *k* | bot | the participant's ⭐/10 for that anime |
-| Review Link | bot | each participant's doc |
-| Review Length | bot | characters written beyond the template |
+| Review Link *k* | bot | the Google Doc for that anime |
+| Review Length *k* | bot | characters written in it beyond the template |
 
-The Recommendation/Rec. Status/Score trio repeats as many times as the
-greediest participant asked for, numbered (`Recommendation 1`,
-`Rec. Status 1`, `Score 1`, `Recommendation 2`, …). If everyone wants a
-single anime, the headers stay unnumbered. Live picks always sit left-packed,
+The Recommendation / Rec. Status / Score / Review Link / Review Length block
+repeats as many times as the greediest participant asked for, numbered
+(`Recommendation 1`, …, `Review Length 1`, `Recommendation 2`, …). If everyone
+wants a single anime, the headers stay unnumbered. Live picks always sit left-packed,
 so after launch each row reads cleanly from `Recommendation 1`.
 
 **Row order and the Group column are the only inputs, and only while the
@@ -324,10 +326,10 @@ and the whole sheet is a dashboard.
 |---|---|
 | Sign-up count on the manager panel | instant when quiet; ≤ ~1–2 min during a burst |
 | Threads + Santa missions at Start Recommending | ~5 participants per minute |
-| Picks per person | 1–5, chosen by each participant at sign-up |
+| Picks per person | 1–3, chosen by each participant at sign-up |
 | Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
 | Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
-| Review docs + assignment cards at Launch | ~5 participants per minute |
+| Review docs + assignment cards at Launch | ~5 docs per minute, then ~5 cards per minute |
 | Review Length / started-writing / Score in sheet & panel | every 30 min, plus on every **🔄 Refresh** click |
 | Reminders | up to 30 messages per minute |
 | Close (flips + reveals) | ~5 participants per minute, docs flip first |
@@ -347,7 +349,7 @@ your profile (`/profile/you`, `/user/you`) or your list (`/animelist/you`).
 The scheme is optional; the bot normalizes it. Other sites are rejected.
 
 **How many anime do I get / do I recommend?**
-You choose your own maximum (1–5) at sign-up; your Santa sees it on their
+You choose your own maximum (1–3) at sign-up; your Santa sees it on their
 mission panel and may send fewer. You recommend for someone else up to *their*
 maximum.
 

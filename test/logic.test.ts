@@ -8,9 +8,10 @@ import {
   a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots, slotCol,
 } from '../src/sheet';
 import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
+import { assignmentCard, revealCard, statusPanel } from '../src/cards';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
-import type { FormItem, RecoRow } from '../src/types';
+import type { EventRow, FormItem, RecoRow, SignupRow } from '../src/types';
 
 describe('timezone conversion (Intl-based, no offset tables)', () => {
   it('converts Seoul wall time (no DST)', () => {
@@ -203,13 +204,14 @@ describe('sheet layout (§8.3)', () => {
     expect(h[layout.recoCol - 1]).toBe('Recommendation'); // single-pick events stay unnumbered
     expect(h[layout.recoCol]).toBe('Rec. Status');
     expect(h[layout.recoCol + 1]).toBe('Score');
+    expect(h[layout.linkCol - 1]).toBe('Review Link');
     expect(h[layout.lengthCol - 1]).toBe('Review Length');
     expect(h).not.toContain('Anime');
     expect(h).not.toContain('Given Anime');
     expect(layout.groupCol).toBe(7);     // A-D fixed + 2 items + Group
     expect(h).toHaveLength(layout.lastCol);
   });
-  it('numbers the per-slot columns when an event has multiple picks (v4)', () => {
+  it('every slot carries its own review doc columns (v6)', () => {
     const h = headerRow(items, 3);
     const layout = layoutOf(items, 3);
     expect(h[layout.recoCol - 1]).toBe('Recommendation 1');
@@ -217,11 +219,11 @@ describe('sheet layout (§8.3)', () => {
     expect(h[slotCol(layout, 3) - 1]).toBe('Recommendation 3');
     expect(h[slotCol(layout, 3)]).toBe('Rec. Status 3');
     expect(h[slotCol(layout, 3) + 1]).toBe('Score 3');
-    expect(h[layout.linkCol - 1]).toBe('Review Link');
-    expect(h[layout.lengthCol - 1]).toBe('Review Length');
+    expect(h[slotCol(layout, 3) + 2]).toBe('Review Link 3');
+    expect(h[slotCol(layout, 3) + 3]).toBe('Review Length 3');
     expect(h).toHaveLength(layout.lastCol);
-    // Three slots add six columns over the single-pick layout.
-    expect(layout.lastCol).toBe(layoutOf(items).lastCol + 6);
+    // Each extra slot adds its own five columns.
+    expect(layout.lastCol).toBe(layoutOf(items).lastCol + 10);
     expect(slotCol(layout, 1)).toBe(layout.recoCol);
   });
   it('reco cells mirror the approve/decline state machine', () => {
@@ -242,7 +244,9 @@ describe('per-participant pick maxima (v5)', () => {
   const reco = (over: Partial<RecoRow>): RecoRow => ({
     reco_id: 1, event_id: 1, signup_id: 1, slot: 1, mal_id: 1, title: 'X', title_en: null,
     year: 2020, type: 'TV', episodes: 12, url: null, image: null, status: 'PENDING',
-    final_via: null, score: null, msg_id: null, created_at: 0, updated_at: 0, ...over,
+    final_via: null, score: null, msg_id: null, doc_id: null, doc_url: null, perm_id: null,
+    template_chars: 0, doc_missing: 0, doc_readonly: 0, wrote: 0, char_count: 0,
+    last_edited: null, synced_at: null, created_at: 0, updated_at: 0, ...over,
   });
   it('declined picks are history — they free the slot back up', () => {
     const rows = [
@@ -259,10 +263,79 @@ describe('per-participant pick maxima (v5)', () => {
     expect(picksLeft({ max_recos: 2 }, rows)).toBe(0);
     expect(picksLeft({ max_recos: 1 }, rows)).toBe(0);   // never negative
   });
-  it('the sheet sizes its slot block to the greediest participant', () => {
-    expect(sheetSlots([{ max_recos: 1 }, { max_recos: 4 }, { max_recos: 2 }])).toBe(4);
+  it('the sheet sizes its slot block to the greediest participant, capped at 3', () => {
+    expect(sheetSlots([{ max_recos: 1 }, { max_recos: 3 }, { max_recos: 2 }])).toBe(3);
+    expect(sheetSlots([{ max_recos: 9 }])).toBe(3);      // never past the cap
     expect(sheetSlots([])).toBe(1);
     expect(sheetSlots([{ max_recos: 0 }])).toBe(1);      // guards bad data
+  });
+});
+
+describe('thread cards (v6: one embed, one review doc per anime)', () => {
+  const reco = (over: Partial<RecoRow>): RecoRow => ({
+    reco_id: 1, event_id: 1, signup_id: 1, slot: 1, mal_id: 1, title: 'X', title_en: null,
+    year: 2020, type: 'TV', episodes: 12, url: null, image: null, status: 'FINAL',
+    final_via: 'APPROVED', score: null, msg_id: null, doc_id: null, doc_url: null, perm_id: null,
+    template_chars: 0, doc_missing: 0, doc_readonly: 0, wrote: 0, char_count: 0,
+    last_edited: null, synced_at: null, created_at: 0, updated_at: 0, ...over,
+  });
+  const signup = (over: Partial<SignupRow>): SignupRow => ({
+    signup_id: 1, event_id: 1, user_id: 'u1', display_name: 'A', username: 'a',
+    list_url: 'https://myanimelist.net/profile/a', answers_json: '{}', row_order: 0, group_no: 1,
+    declines_used: 0, reco_declined_json: '[]', reco_card_posted: 0, thread_id: null,
+    mission_msg_id: null, doc_id: null, doc_url: null, perm_id: null, dm_channel_id: null,
+    assignment_posted: 0, doc_readonly: 0, reveal_posted: 0, synced_at: null, template_chars: 0,
+    doc_missing: 0, wrote: 0, last_edited: null, char_count: 0, max_recos: 3,
+    created_at: 0, updated_at: 0, ...over,
+  });
+  const event = {
+    event_id: 1, state: 'RECOMMENDING', topic: 'S', theme: null, max_declines: 2,
+    reco_deadline: null, review_deadline: 1800000000,
+  } as unknown as EventRow;
+
+  const me = signup({ signup_id: 1, user_id: 'u1', display_name: 'A' });
+  const giftee = signup({ signup_id: 2, user_id: 'u2', display_name: 'B', max_recos: 2 });
+
+  it('the status panel is a SINGLE embed carrying mission + approvals', () => {
+    const panel = statusPanel(event, me, giftee, [], [], [
+      reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
+    ]) as { embeds: Array<{ title: string; description: string }> };
+    expect(panel.embeds).toHaveLength(1);
+    expect(panel.embeds[0]!.title).toContain('Secret Santa of B');
+    expect(panel.embeds[0]!.description).toContain('Anime you approved');
+    expect(panel.embeds[0]!.description).toContain('Kaiba');
+  });
+
+  it('the assignment card links one review doc per anime', () => {
+    const mine = [
+      reco({ reco_id: 1, slot: 1, signup_id: 1, title: 'Kaiba', doc_url: 'https://d/1' }),
+      reco({ reco_id: 2, slot: 2, signup_id: 1, title: 'Dandadan', doc_url: 'https://d/2' }),
+    ];
+    const card = assignmentCard(event, me, giftee, mine, []) as {
+      components: Array<{ components: Array<{ url?: string; label: string }> }>;
+    };
+    const links = card.components[0]!.components.filter((b) => b.url);
+    expect(links.map((b) => b.url)).toEqual(['https://d/1', 'https://d/2']);
+    expect(links[0]!.label).toContain('Kaiba');
+    // A single pick keeps the generic wording.
+    const solo = assignmentCard(event, me, giftee, [mine[0]!], []) as {
+      components: Array<{ components: Array<{ url?: string; label: string }> }>;
+    };
+    expect(solo.components[0]!.components.filter((b) => b.url)[0]!.label)
+      .toBe('\ud83d\udcdd Open your review doc');
+  });
+
+  it('the reveal links the review of each anime, not of the person', () => {
+    const theirs = [
+      reco({ reco_id: 3, signup_id: 2, title: 'Kaiba', score: 8, doc_url: 'https://d/3' }),
+      reco({ reco_id: 4, signup_id: 2, slot: 2, title: 'Dandadan', score: null, doc_url: null }),
+    ];
+    const card = revealCard(me, signup({ signup_id: 3, user_id: 'u3', display_name: 'C' }),
+      giftee, [], theirs) as { embeds: Array<{ description: string }> };
+    const d = card.embeds[0]!.description;
+    expect(d).toContain('([read review](https://d/3))');
+    expect(d).toContain('\u2b50 8/10');
+    expect(d).toContain('*review doc missing*');   // the pick whose doc never got made
   });
 });
 

@@ -36,8 +36,9 @@ const statusTag = (r: RecoRow): string =>
     : 'waiting for their reply ⏳';
 
 /**
- * The one live panel in a participant's thread during PREPARING/RECOMMENDING:
- * mission on top, the anime they've accepted below, controls last.
+ * The one live panel in a participant's thread during PREPARING/RECOMMENDING —
+ * a SINGLE embed: mission on top, the anime they've accepted below, controls
+ * last.
  */
 export function statusPanel(
   event: EventRow, me: SignupRow, giftee: SignupRow, items: FormItem[],
@@ -70,6 +71,7 @@ export function statusPanel(
   const myFinal = finalRecos(myRecos);
   const myPending = pendingRecos(myRecos);
   const mineLines = [
+    '🎁 **Anime you approved**',
     myFinal.length
       ? myFinal.map((r, i) => `**${i + 1}.** ✅ ${animeLabel(r)}\n${animeLine(r)}`).join('\n')
       : '*nothing accepted yet*',
@@ -92,9 +94,8 @@ export function statusPanel(
     embeds: [
       embed({
         title: `🎯 You are the Secret Santa of ${giftee.display_name}`,
-        description: missionLines,
+        description: `${missionLines}\n\n${mineLines}`,
       }),
-      embed({ title: '🎁 Anime you approved', description: mineLines }),
     ],
     components: buttons.length ? [row(...buttons)] : [],
   };
@@ -137,9 +138,14 @@ export const answerNotice = (santa: SignupRow, giftee: SignupRow, reco: RecoRow)
     : `<@${santa.user_id}> 🎉 **${giftee.display_name}** said **Thank you!😊** to **${animeLabel(reco)}**.`,
 });
 
+/** Button labels cap at 80 chars — keep long titles readable. */
+const short = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+
 /**
  * Posted in each thread by the launch job: the recap of what this participant
- * picked (top), then their own anime + review doc + deadline, buttons last.
+ * picked (top), then their own anime + review docs + deadline, buttons last.
+ * Every anime has its OWN review doc, so multi-anime threads get one link
+ * button each.
  */
 export function assignmentCard(
   event: EventRow, me: SignupRow, myGiftee: SignupRow,
@@ -149,6 +155,12 @@ export function assignmentCard(
   const mine = activeRecos(myRecos);
   const theirs = activeRecos(gifteeRecos);
   const single = mine.length === 1 ? mine[0] : null;
+  const docBtns = mine
+    .filter((r) => r.doc_url)
+    .map((r) => linkBtn(
+      r.doc_url!,
+      single ? '📝 Open your review doc' : `📝 Review: ${short(animeLabel(r), 55)}`,
+    ));
   return {
     content: `<@${me.user_id}> the exchange is on — happy watching! 🎬`,
     embeds: [
@@ -167,7 +179,8 @@ export function assignmentCard(
             ? `${animeLine(single)}\n`
             : `${mine.map((r) => `• **${animeLabel(r)}** — ${animeLine(r)}`).join('\n')}\n`) +
           `Picked for you by your Secret Santa — *revealed at the end.*\n` +
-          `Watch the **full season**${mine.length > 1 ? ' of each' : ''}, then write your review${mine.length > 1 ? 's' : ''} in your doc below.`,
+          `Watch the **full season**${mine.length > 1 ? ' of each' : ''}, then write your review${mine.length > 1 ? 's' : ''} ` +
+          `${single ? 'in your doc below' : '— **each anime has its own doc** below'}.`,
         image: single?.image ?? mine[0]?.image ?? undefined,
         fields: [{
           name: '⏰ Review deadline',
@@ -175,15 +188,15 @@ export function assignmentCard(
         }],
       }),
     ],
-    components: [row(...[
-      me.doc_url ? linkBtn(me.doc_url, '📝 Open your review doc') : null,
+    components: [row(
+      ...docBtns,
       btn('ax:score', mine.length > 1 ? '⭐ Score them /10' : '⭐ Score it /10', Style.PRIMARY),
-    ].filter(Boolean) as unknown[])],
+    )],
   };
 }
 
-/** Posted in each thread by the close job. The review link rides inline in
- *  the sentence — "(read review)" — no button. */
+/** Posted in each thread by the close job. Every anime carries its own review
+ *  link inline — "(read review)" — no buttons. */
 export function revealCard(
   me: SignupRow, santa: SignupRow, myGiftee: SignupRow,
   myRecos: RecoRow[], gifteeRecos: RecoRow[],
@@ -194,6 +207,9 @@ export function revealCard(
   const verdict = scored.length === 0
     ? `didn't score your pick${theirs.length > 1 ? 's' : ''}`
     : `rated your pick${theirs.length > 1 ? 's' : ''}`;
+  const theirLine = (r: RecoRow): string =>
+    `• **${animeLabel(r)}**${r.score !== null ? ` — ⭐ ${r.score}/10` : ''}` +
+    `${r.doc_url ? ` ([read review](${r.doc_url}))` : ' — *review doc missing*'}`;
   return {
     content: `<@${me.user_id}> the reveal is here! 🎭`,
     embeds: [embed({
@@ -202,10 +218,7 @@ export function revealCard(
         `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>) — ` +
         `they picked ${mine.map((r) => `**${animeLabel(r)}**`).join(', ') || '—'} for you.\n\n` +
         `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) ${verdict}` +
-        `${myGiftee.doc_url ? ` ([read review](${myGiftee.doc_url}))` : ' — but their review doc is missing.'}` +
-        (theirs.length
-          ? `\n${theirs.map((r) => `• **${animeLabel(r)}**${r.score !== null ? ` — ⭐ ${r.score}/10` : ''}`).join('\n')}`
-          : ''),
+        (theirs.length ? `\n${theirs.map(theirLine).join('\n')}` : '.'),
     })],
   };
 }

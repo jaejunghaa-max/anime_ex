@@ -26,7 +26,7 @@ import {
 } from '../util';
 import { bg, HCtx, repaint, stale } from './common';
 
-const MAX_ITEMS = 9;
+const MAX_ITEMS = 8; // 2 modals × 5 fields − picks select − list link
 // Pre-filled in the Set Basics / Launch timezone fields (still editable).
 const DEFAULT_TZ = 'America/Chicago';
 
@@ -55,20 +55,28 @@ async function enqueueJob(c: HCtx, eventId: number, kind: string, payload: Recor
   }
 }
 
-/** Recommendation progress counted in PEOPLE, not picks. */
+/** Recommendation progress in PEOPLE (accepted / owing a reply / empty-handed)
+ *  plus the same story in PICKS (accepted vs. the total everyone asked for). */
 async function peopleCounts(c: HCtx, eventId: number): Promise<{
   total: number; accepted: number; pending: number; nothing: number;
+  picks: number; wanted: number;
 }> {
   const r = await c.env.DB.prepare(
     `SELECT COUNT(*) AS total,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL') THEN 1 ELSE 0 END), 0) AS accepted,
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
-       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting
+       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting,
+       COALESCE(SUM((SELECT COUNT(*) FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL')), 0) AS picks,
+       COALESCE(SUM(s.max_recos), 0) AS wanted
      FROM signups s WHERE s.event_id = ?1`,
-  ).bind(eventId).first<{ total: number; accepted: number; pending: number; awaiting: number }>();
+  ).bind(eventId).first<{
+    total: number; accepted: number; pending: number; awaiting: number;
+    picks: number; wanted: number;
+  }>();
   return {
     total: r?.total ?? 0, accepted: r?.accepted ?? 0,
     pending: r?.pending ?? 0, nothing: r?.awaiting ?? 0,
+    picks: r?.picks ?? 0, wanted: r?.wanted ?? 0,
   };
 }
 
@@ -125,10 +133,6 @@ export function basicsModal(c: HCtx): Response {
       placeholder: 'Nostalgia / hidden gems / movies only…',
       description: 'What the picks should aim for — shown to everyone',
     }),
-    modalText('recos', 'Default picks wanted (1–5)', {
-      value: String(e.max_recos), max: 1,
-      description: 'Each participant can change this for themselves at sign-up',
-    }),
     modalText('declines', 'Sorry😞 budget per person (0–9)', {
       value: String(e.max_declines), max: 1,
       description: 'How many recommendations each participant may send back',
@@ -142,26 +146,21 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
   const f = modalFields(c.i.data?.components);
   const topic = (f.get('topic') ?? '').trim();
   const theme = (f.get('theme') ?? '').trim().slice(0, 100) || null;
-  const recosRaw = (f.get('recos') ?? '').trim();
   const declinesRaw = (f.get('declines') ?? '').trim();
   if (!topic) return respond.ephemeral({ content: '⚠ The Session name cannot be empty.' });
-  if (!/^[1-5]$/.test(recosRaw)) {
-    return respond.ephemeral({ content: '⚠ Default picks wanted must be **1–5**. Reopen **Set Basics** and try again.' });
-  }
   if (!/^[0-9]$/.test(declinesRaw)) {
     return respond.ephemeral({ content: '⚠ The Sorry😞 budget must be a single digit **0–9**. Reopen **Set Basics** and try again.' });
   }
-  const maxRecos = parseInt(recosRaw, 10);
   const maxDeclines = parseInt(declinesRaw, 10);
   await c.env.DB.prepare(
-    'UPDATE events SET topic = ?1, theme = ?2, max_recos = ?3, max_declines = ?4, updated_at = ?5 WHERE event_id = ?6',
-  ).bind(topic, theme, maxRecos, maxDeclines, now(), e.event_id).run();
+    'UPDATE events SET topic = ?1, theme = ?2, max_declines = ?3, updated_at = ?4 WHERE event_id = ?5',
+  ).bind(topic, theme, maxDeclines, now(), e.event_id).run();
   bg(c, async () => {
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
       content:
         `✅ Basics saved — **${topic}**${theme ? ` · theme **${theme}**` : ''}, ` +
-        `up to **${maxRecos}** pick(s) wanted by default, **${maxDeclines}** decline(s) per person.`,
+        `**${maxDeclines}** decline(s) per person.`,
     });
   });
   return respond.deferEphemeral();
@@ -790,7 +789,7 @@ export async function recoStartSubmit(c: HCtx): Promise<Response> {
       `• Recommendation deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
       `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
-      `Everyone recommends **${e.max_recos}** anime and can send picks back **${e.max_declines}** time(s).\n` +
+      `Everyone recommends up to the number their giftee asked for (1–3) and can send picks back **${e.max_declines}** time(s).\n` +
       `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
     components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
@@ -961,7 +960,7 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
   return respond.ephemeral({
     content:
       `🚀 **Launch ${e.topic}?**\n` +
-      `• Participants: **${n}** · with an accepted anime: **${agg.accepted}** · ⏳ waiting to reply: **${pending}** · 🎁 waiting on their Santa: **${waiting}**\n` +
+      `• Participants: **${n}** · with an accepted anime: **${agg.accepted}** · picks accepted: **${agg.picks} / ${agg.wanted}**\n` +
       `• Review deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• Reminders: ${reminderLine}${mirror ? ' (+ DM mirror)' : ''}\n\n` +
       (waiting > 0
@@ -969,7 +968,7 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
         : pending > 0
           ? `**‼️The pending picks will be locked**\n\n`
           : '') +
-      `Launching creates one review doc per participant for their anime and posts the assignment ` +
+      `Launching creates one review doc per accepted anime and posts the assignment ` +
       `card in their existing thread (batched — ~${Math.max(1, Math.ceil(n / c.cfg.jobBatch))} min). Forward-only.`,
     components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
@@ -1036,32 +1035,13 @@ export async function launchGo(c: HCtx): Promise<Response> {
 export async function refreshStatus(c: HCtx): Promise<Response> {
   const e = needState(c, 'SIGNUP_OPEN', 'RECOMMENDING', 'RUNNING');
   if (!e) return stale(c);
-  if (e.state === 'RUNNING') {
-    const queued = await enqueueJob(c, e.event_id, 'sync');
-    const agg = await c.env.DB
-      .prepare('SELECT COALESCE(SUM(wrote), 0) AS started, COUNT(*) AS n FROM signups WHERE event_id = ?1')
-      .bind(e.event_id).first<{ started: number; n: number }>();
-    return respond.ephemeral({
-      content:
-        (queued
-          ? '🔄 **Status refresh queued** — the panel and sheet update within a minute or two.'
-          : '🔄 A refresh is already running — the panel and sheet update within a minute or two.') +
-        `\n✍ **${agg?.started ?? 0} / ${agg?.n ?? 0}** started writing · full detail in the sheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
-    });
-  }
-  bg(c, async () => {
-    await repaint(c);
-    if (e.state === 'SIGNUP_OPEN') {
-      const n = await countSignups(c.env, e.event_id);
-      await editOriginal(c.env, c.i.token, { content: `🔄 Refreshed — **${n}** signed up.` });
-    } else {
-      const agg = await peopleCounts(c, e.event_id);
-      await editOriginal(c.env, c.i.token, {
-        content: `🔄 Refreshed — **${agg.accepted} / ${agg.total}** participants have an accepted anime · ⏳ **${agg.pending}** waiting to reply · 🎁 **${agg.nothing}** waiting on their Santa.`,
-      });
-    }
+  // The numbers live on the panel and in the sheet — the reply is just a
+  // receipt, identical in every state.
+  if (e.state === 'RUNNING') await enqueueJob(c, e.event_id, 'sync');
+  else bg(c, () => repaint(c));
+  return respond.ephemeral({
+    content: '🔄 **Status refresh queued** — the panel and sheet update within a minute or two.',
   });
-  return respond.deferEphemeral();
 }
 
 /**

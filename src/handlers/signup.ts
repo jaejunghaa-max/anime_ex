@@ -7,10 +7,10 @@
 
 import type { DraftRow, EventRow, FormItem } from '../types';
 import { modalFields } from '../types';
-import { btn, editOriginal, embed, modalSelect, modalText, respond, row, stringSelect, Style } from '../discord';
+import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
 import type { RecoRow, SignupRow } from '../types';
 import { activeRecos, answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
-import { rewriteSheet, writeScoreCells } from '../sheet';
+import { MAX_PICKS, rewriteSheet, writeRecoCells } from '../sheet';
 import { normalizeListUrl, now, sanitizeName, truncate } from '../util';
 import { bg, HCtx, stale, throttledCountRepaint } from './common';
 
@@ -61,8 +61,10 @@ const parseJson = <T>(s: string | null, fallback: T): T => {
 
 // ----------------------------------------------------------- modal builders
 
-const itemsA = (items: FormItem[]) => items.slice(0, 4);
-const itemsB = (items: FormItem[]) => items.slice(4, 9);
+// Modal A holds the picks select + the list link + 3 items (Discord's cap is
+// five components per modal); Modal B takes the next five.
+const itemsA = (items: FormItem[]) => items.slice(0, 3);
+const itemsB = (items: FormItem[]) => items.slice(3, 8);
 
 function itemComponent(it: FormItem, answers: Record<string, string>): Record<string, unknown> {
   const prev = answers[String(it.item_id)];
@@ -80,7 +82,16 @@ export const LINK_DESC_DEFAULT =
   'N/A if you have none — your Secret Santa studies this to pick for you';
 
 function modalA(e: EventRow, items: FormItem[], answers: Record<string, string>): Response {
+  const picks = picksOf(answers, 1);
   return respond.modal('axm:signup_a', 'Sign up — step 1', [
+    modalSelect(PICKS_KEY, 'How many anime do you want?',
+      Array.from({ length: MAX_PICKS }, (_, i) => i + 1).map((n) => ({
+        label: n === 1 ? '1 anime' : `up to ${n} anime`,
+        value: String(n),
+        default: n === picks,
+      })),
+      { description: 'A maximum — your Secret Santa may send fewer' },
+    ),
     modalText(LINK_KEY, e.link_label || LINK_LABEL_DEFAULT, {
       value: answers[LINK_KEY] ?? '', max: 300,
       placeholder: 'https://myanimelist.net/profile/you — or anilist.co/user/you',
@@ -167,6 +178,7 @@ export async function signupModalA(c: HCtx): Promise<Response> {
     ...parseJson<Record<string, string>>(prevDraft?.partial_answers_json ?? null, {}),
     ...collectAnswers(itemsA(items), fields),
     [LINK_KEY]: rawLink,
+    [PICKS_KEY]: fields.get(PICKS_KEY) ?? '1',
   };
   const fromEphemeral = ((c.i.message?.flags ?? 0) & 64) !== 0;
   const reply = (payload: Record<string, unknown>) =>
@@ -273,13 +285,13 @@ export async function signupRestart(c: HCtx): Promise<Response> {
   return modalA(e, items, {});
 }
 
-// How many anime the participant is willing to receive — their own call,
-// travelling through the wizard next to the answers.
+// How many anime the participant is willing to receive — their own call, the
+// first field of the form, travelling through the wizard with the answers.
 const PICKS_KEY = 'picks';
 
-const picksOf = (answers: Record<string, string>, fallback: number): number => {
+const picksOf = (answers: Record<string, string>, fallback = 1): number => {
   const n = parseInt(answers[PICKS_KEY] ?? '', 10);
-  return n >= 1 && n <= 5 ? n : Math.min(5, Math.max(1, fallback));
+  return n >= 1 && n <= MAX_PICKS ? n : Math.min(MAX_PICKS, Math.max(1, fallback));
 };
 
 function summaryCard(
@@ -287,48 +299,25 @@ function summaryCard(
 ): Record<string, unknown> {
   const link = answers[LINK_KEY] ?? '—';
   const offSite = link !== '—' && !normalizeListUrl(link) ? ' ⚠ *(not a MAL/AniList link)*' : '';
-  const picks = picksOf(answers, e.max_recos);
+  const picks = picksOf(answers);
   return {
     content: 'Almost done — confirm your sign-up:',
     embeds: [embed({
       title: '📝 Your sign-up',
       description:
-        `**Your list:** ${link}${offSite}\n*Your Secret Santa studies this to pick your anime.*\n\n` +
-        `**Anime you want:** at most **${picks}** — your Secret Santa may send fewer.`,
+        `**Anime you want:** at most **${picks}** — your Secret Santa may send fewer.\n` +
+        `**Your list:** ${link}${offSite}\n*Your Secret Santa studies this to pick your anime.*`,
       fields: items.map((it) => ({
         name: `${it.label}${it.visible_to_recommender ? ' 👁' : ' 🔒'}`,
         value: answers[String(it.item_id)] || '—',
       })),
       footer: '👁 = shown to your Secret Santa when they pick for you',
     })],
-    components: [
-      row(stringSelect('ax:signup_picks', 'How many anime do you want?',
-        [1, 2, 3, 4, 5].map((n) => ({
-          label: n === 1 ? '1 anime' : `up to ${n} anime`,
-          value: String(n),
-          default: n === picks,
-        })))),
-      row(
-        btn('ax:signup_confirm', '✅ Confirm Sign-Up', Style.SUCCESS),
-        btn('ax:signup_restart', '↺ Start Over'),
-      ),
-    ],
+    components: [row(
+      btn('ax:signup_confirm', '✅ Confirm Sign-Up', Style.SUCCESS),
+      btn('ax:signup_restart', '↺ Start Over'),
+    )],
   };
-}
-
-/** The picks select under the summary card. */
-export async function signupPicks(c: HCtx): Promise<Response> {
-  const e = c.event;
-  if (!e || e.state !== 'SIGNUP_OPEN') return stale(c, 'Sign-ups are not open.');
-  const draft = await loadDraft(c, e.event_id);
-  if (!draft) {
-    return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
-  }
-  const answers = parseJson<Record<string, string>>(draft.partial_answers_json, {});
-  answers[PICKS_KEY] = c.i.data?.values?.[0] ?? String(e.max_recos);
-  await saveDraft(c, e.event_id, { ...draft, partial_answers_json: JSON.stringify(answers) });
-  const items = await getItems(c.env, e.event_id);
-  return respond.update(summaryCard(e, items, answers));
 }
 
 /** [✅ Confirm Sign-Up] → upsert signup + sheet row + throttled panel count. */
@@ -343,7 +332,7 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   if (!draft || !link) {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
-  const picks = picksOf(answers, e.max_recos);
+  const picks = picksOf(answers);
   const itemAnswers = { ...answers };
   delete itemAnswers[LINK_KEY];
   delete itemAnswers[PICKS_KEY];
@@ -399,7 +388,7 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
 
 const SCORE_STATES = ['LAUNCHING', 'RUNNING'] as const;
 
-/** The participant's own anime, in slot order (max 5 — one modal select each). */
+/** The participant's own anime, in slot order (max 3 — one modal select each). */
 async function myRecos(c: HCtx, eventId: number, signupId: number): Promise<RecoRow[]> {
   const res = await c.env.DB
     .prepare('SELECT * FROM recos WHERE event_id = ?1 AND signup_id = ?2 ORDER BY slot')
@@ -461,11 +450,9 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
       .bind(r.score, now(), r.reco_id)));
   bg(c, async () => {
     if (me.row_order !== null) {
-      // Best-effort sheet cells; a job's self-heal rewrite fixes any failure.
+      // Best-effort row rewrite; a job's self-heal fixes any failure.
       const items = await getItems(c.env, e.event_id);
-      // Scores sit in the live-pick columns, so pass the full ordered list.
-      const live = await myRecos(c, e.event_id, me.signup_id);
-      await writeScoreCells(c.env, c.guild, e, items, me.row_order, live, Math.max(me.max_recos, live.length)).catch((err) => {
+      await writeRecoCells(c.env, c.guild, e, items, me).catch((err: unknown) => {
         console.error('score cell write failed (self-heal will fix)', err);
       });
     }

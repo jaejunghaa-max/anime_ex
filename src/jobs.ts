@@ -16,7 +16,7 @@ import {
   GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
 import { repaintPanels, repostPanels } from './panels';
-import { lengthCell, rewriteSheetFromDb, writeReviewLinks, writeStatusCells } from './sheet';
+import { rewriteSheetFromDb, writeRecoRows } from './sheet';
 import { buildLoops, chunkLines, epochToZoned, now, truncate } from './util';
 
 /** Convergence self-heal: one full sheet rewrite from D1, best-effort. Run at
@@ -161,7 +161,54 @@ async function prepareTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow,
 
 async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
   const all = await orderedSignups(env, event.event_id);
+  const byId = new Map(all.map((s) => [s.signup_id, s]));
   const loops = buildLoops(all.map((s) => s.group_no));
+  const items = await getItems(env, event.event_id);
+  const deadlineText = epochToZoned(event.review_deadline ?? now(), event.tz ?? 'UTC');
+
+  // Pass 1 — one review doc per accepted anime. Doc work is the expensive
+  // part (≈4 external calls each), so it gets the whole tick budget.
+  const needDocs = await env.DB.prepare(
+    `SELECT r.* FROM recos r
+     WHERE r.event_id = ?1 AND r.status = 'FINAL' AND r.doc_id IS NULL
+     ORDER BY r.signup_id, r.slot LIMIT ?2`,
+  ).bind(event.event_id, cfg.jobBatch).all<RecoRow>();
+
+  if (needDocs.results.length > 0) {
+    const touched = new Set<number>();
+    for (const r of needDocs.results) {
+      const owner = byId.get(r.signup_id);
+      if (!owner) continue;
+      const anime = r.title ?? 'their anime';
+      const id = await createDoc(env, guild, `Review of ${anime} by ${owner.display_name}`);
+      await env.DB.prepare('UPDATE recos SET doc_id = ?1, doc_url = ?2, updated_at = ?3 WHERE reco_id = ?4')
+        .bind(id, docUrl(id), now(), r.reco_id).run();
+      // "given to J(@j_handle)" — falls back to the display name alone for
+      // rows signed up before the username column existed.
+      const givenTo = owner.username ? `${owner.display_name}(@${owner.username})` : owner.display_name;
+      await writeDocTemplate(env, guild, id, {
+        heading: `Review of ${anime}`, givenTo, deadlineText, sections: [],
+      });
+      const template = await driveExportText(env, guild, id);
+      const perm = await driveShareAnyone(env, guild, id, 'writer'); // link-as-capability (§8.4)
+      await env.DB.prepare(
+        'UPDATE recos SET perm_id = ?1, template_chars = ?2, updated_at = ?3 WHERE reco_id = ?4',
+      ).bind(perm, template.length, now(), r.reco_id).run();
+      touched.add(r.signup_id);
+    }
+    // Mirror the fresh links into each touched participant's row.
+    const rows = await Promise.all([...touched].map(async (signupId) => ({
+      row: byId.get(signupId)!,
+      recos: (await env.DB.prepare('SELECT * FROM recos WHERE signup_id = ?1 ORDER BY slot')
+        .bind(signupId).all<RecoRow>()).results,
+    })));
+    await writeRecoRows(env, guild, event, items, rows.filter((r) => r.row))
+      .catch((e) => console.error('review link cells failed (non-fatal)', e));
+    await repaintPanels(env, cfg, guild.guild_id);
+    return;
+  }
+
+  // Pass 2 — the assignment card, once every one of that person's docs exists.
   const recos = await loadRecos(env, event.event_id);
   const pending = all
     .map((s, idx) => ({ s, idx }))
@@ -171,50 +218,15 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
   if (pending.length === 0) {
     await transition(env, event.event_id, 'LAUNCHING', 'RUNNING');
     await markDone(env, job);
+    await healSheet(env, guild, event);
     await repaintPanels(env, cfg, guild.guild_id);
     return;
   }
 
-  const items = await getItems(env, event.event_id);
-  const deadlineText = epochToZoned(event.review_deadline ?? now(), event.tz ?? 'UTC');
-  const linkWrites: Array<{ rowIndex: number; url: string }> = [];
-  const finalStmts: D1PreparedStatement[] = [];
-
+  const stmts: D1PreparedStatement[] = [];
   for (const { s, idx } of pending) {
     const myGiftee = all[loops.recipient[idx]!]!;
     const mine = activeRecos(recosOf(recos, s.signup_id));
-    const titles = mine.map((r) => r.title ?? '?');
-    // One doc per participant; with several picks it carries a section each.
-    const docTitle = titles.length === 1
-      ? `Review of ${titles[0]} by ${s.display_name}`
-      : `Reviews by ${s.display_name} — ${event.topic ?? 'Anime Exchange'}`;
-
-    // Docs sub-steps persist immediately after creation so a crash between
-    // calls never duplicates a doc/thread on the next tick (§7.4).
-    if (!s.doc_id) {
-      const id = await createDoc(env, guild, docTitle);
-      s.doc_id = id;
-      s.doc_url = docUrl(id);
-      await env.DB.prepare('UPDATE signups SET doc_id = ?1, doc_url = ?2, updated_at = ?3 WHERE signup_id = ?4')
-        .bind(id, s.doc_url, now(), s.signup_id).run();
-      // "given to J(@j_handle)" — falls back to the display name alone for
-      // rows signed up before the username column existed.
-      const givenTo = s.username ? `${s.display_name}(@${s.username})` : s.display_name;
-      await writeDocTemplate(env, guild, id, {
-        heading: titles.length === 1 ? `Review of ${titles[0]}` : `Reviews by ${s.display_name}`,
-        givenTo, deadlineText,
-        sections: titles.length > 1 ? titles : [],
-      });
-      const template = await driveExportText(env, guild, id);
-      s.template_chars = template.length;
-    }
-    if (!s.perm_id) {
-      s.perm_id = await driveShareAnyone(env, guild, s.doc_id, 'writer'); // link-as-capability (§8.4)
-      await env.DB.prepare('UPDATE signups SET perm_id = ?1, template_chars = ?2, updated_at = ?3 WHERE signup_id = ?4')
-        .bind(s.perm_id, s.template_chars, now(), s.signup_id).run();
-    }
-    // Threads were created by the prepare job; ensure covers the rare case of
-    // one being deleted mid-event.
     const threadId = await ensureThread(env, guild, s);
     // The recommendation-phase status panel is history now; the assignment
     // card takes over as the thread's live surface.
@@ -225,17 +237,11 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
     }
     await postMessage(env, threadId,
       assignmentCard(event, s, myGiftee, mine, recosOf(recos, myGiftee.signup_id)));
-
-    finalStmts.push(env.DB.prepare(
+    stmts.push(env.DB.prepare(
       'UPDATE signups SET assignment_posted = 1, updated_at = ?1 WHERE signup_id = ?2',
     ).bind(now(), s.signup_id));
-    linkWrites.push({ rowIndex: idx, url: s.doc_url! });
   }
-
-  await env.DB.batch(finalStmts);
-  await writeReviewLinks(env, guild, event, items, linkWrites).catch((e) => {
-    console.error('review link cells failed (non-fatal)', e);
-  });
+  await env.DB.batch(stmts);
 
   const left = await env.DB
     .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND assignment_posted = 0')
@@ -264,14 +270,14 @@ async function postGallery(
     for (const i of members) {
       const s = all[i]!;
       const santa = all[loops.santa[i]!]!;
-      // "J (@J) picked X (⭐8), Y for rabbit (@rabbit) (read review)"
-      const link = s.doc_url ? ` ([read review](${s.doc_url}))` : '';
+      // "J (@J) picked X (⭐8, review), Y for rabbit (@rabbit)"
       const picks = activeRecos(recosOf(recos, s.signup_id))
-        .map((r) => `**${animeLabel(r)}**${r.score !== null ? ` (⭐ ${r.score})` : ''}`)
+        .map((r) => `**${animeLabel(r)}**${r.score !== null ? ` (⭐ ${r.score})` : ''}` +
+          `${r.doc_url ? ` ([review](${r.doc_url}))` : ''}`)
         .join(', ') || '—';
       lines.push(
         `🎁 **${santa.display_name}** (<@${santa.user_id}>) picked ${picks} for ` +
-        `**${s.display_name}** (<@${s.user_id}>)${link}`,
+        `**${s.display_name}** (<@${s.user_id}>)`,
       );
     }
   }
@@ -309,23 +315,26 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
   // Phase 1 — ALL docs flip read-only before ANY reveal link is posted (§7.6,
   // M6: reveal cards link the *giftee's* doc, so per-unit interleaving
   // would leak an editable doc).
-  const toFlip = all.filter((s) => !s.doc_readonly).slice(0, cfg.jobBatch);
-  if (toFlip.length > 0) {
+  const toFlip = await env.DB.prepare(
+    `SELECT * FROM recos WHERE event_id = ?1 AND status != 'DECLINED' AND doc_readonly = 0
+     ORDER BY signup_id, slot LIMIT ?2`,
+  ).bind(event.event_id, cfg.jobBatch).all<RecoRow>();
+  if (toFlip.results.length > 0) {
     const stmts: D1PreparedStatement[] = [];
-    for (const s of toFlip) {
-      if (s.doc_id && !s.doc_missing) {
+    for (const r of toFlip.results) {
+      if (r.doc_id && !r.doc_missing) {
         try {
-          await driveFlipAnyoneToReader(env, guild, s.doc_id, s.perm_id);
+          await driveFlipAnyoneToReader(env, guild, r.doc_id, r.perm_id);
         } catch (e) {
           if (e instanceof GoogleApiError && e.status === 404) {
-            stmts.push(env.DB.prepare('UPDATE signups SET doc_missing = 1 WHERE signup_id = ?1').bind(s.signup_id));
+            stmts.push(env.DB.prepare('UPDATE recos SET doc_missing = 1 WHERE reco_id = ?1').bind(r.reco_id));
           } else {
             throw e; // auth/5xx: retry next tick, panel surfaces after 5 fails
           }
         }
       }
-      stmts.push(env.DB.prepare('UPDATE signups SET doc_readonly = 1, updated_at = ?1 WHERE signup_id = ?2')
-        .bind(now(), s.signup_id));
+      stmts.push(env.DB.prepare('UPDATE recos SET doc_readonly = 1, updated_at = ?1 WHERE reco_id = ?2')
+        .bind(now(), r.reco_id));
     }
     await env.DB.batch(stmts);
     await repaintPanels(env, cfg, guild.guild_id);
@@ -373,9 +382,9 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
 
 async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
   const pending = await env.DB.prepare(
-    `SELECT * FROM signups WHERE event_id = ?1 AND doc_id IS NOT NULL
-       AND (synced_at IS NULL OR synced_at < ?2) ORDER BY row_order LIMIT ?3`,
-  ).bind(event.event_id, job.created_at, cfg.jobBatch).all<SignupRow>();
+    `SELECT * FROM recos WHERE event_id = ?1 AND doc_id IS NOT NULL
+       AND (synced_at IS NULL OR synced_at < ?2) ORDER BY signup_id, slot LIMIT ?3`,
+  ).bind(event.event_id, job.created_at, cfg.jobBatch).all<RecoRow>();
 
   if (pending.results.length === 0) {
     await markDone(env, job);
@@ -383,75 +392,90 @@ async function syncTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, jo
     return;
   }
 
-  const items = await getItems(env, event.event_id);
   const stmts: D1PreparedStatement[] = [];
-  const cells: Array<{ rowIndex: number; length: number | string }> = [];
-  let wroteChanged = false;
+  const touched = new Set<number>();
 
-  for (const s of pending.results) {
+  for (const r of pending.results) {
+    touched.add(r.signup_id);
     let meta;
     try {
-      meta = await driveFileMeta(env, guild, s.doc_id!);
+      meta = await driveFileMeta(env, guild, r.doc_id!);
     } catch (e) {
       if (e instanceof GoogleApiError && e.status === 404) {
-        // Manager deleted the doc (§8.5): flag it, keep syncing others.
+        // Someone deleted the doc (§8.5): flag it, keep syncing the rest.
         stmts.push(env.DB.prepare(
-          'UPDATE signups SET doc_missing = 1, wrote = 0, synced_at = ?1, updated_at = ?1 WHERE signup_id = ?2',
-        ).bind(now(), s.signup_id));
-        if (s.row_order !== null) {
-          cells.push({ rowIndex: s.row_order, length: lengthCell({ ...s, doc_missing: 1 }) });
-        }
-        wroteChanged = wroteChanged || s.wrote === 1;
+          'UPDATE recos SET doc_missing = 1, wrote = 0, synced_at = ?1, updated_at = ?1 WHERE reco_id = ?2',
+        ).bind(now(), r.reco_id));
         continue;
       }
       throw e;
     }
     const mtime = meta.modifiedTime ? Math.floor(Date.parse(meta.modifiedTime) / 1000) : null;
 
-    if (mtime !== null && s.last_edited === mtime && s.synced_at !== null) {
-      // Cheap path: unchanged since last sync (§8.5 step 1). Still re-derive
-      // wrote from the stored char_count so rows synced under the old
-      // grace-clause formula heal without waiting for another doc edit.
-      const wrote = s.char_count >= WROTE_MIN_CHARS ? 1 : 0;
-      if (wrote !== s.wrote) wroteChanged = true;
-      stmts.push(env.DB.prepare('UPDATE signups SET wrote = ?1, synced_at = ?2, doc_missing = 0 WHERE signup_id = ?3')
-        .bind(wrote, now(), s.signup_id));
+    if (mtime !== null && r.last_edited === mtime && r.synced_at !== null) {
+      // Cheap path: unchanged since last sync (§8.5 step 1).
+      stmts.push(env.DB.prepare(
+        'UPDATE recos SET wrote = ?1, synced_at = ?2, doc_missing = 0 WHERE reco_id = ?3',
+      ).bind(r.char_count >= WROTE_MIN_CHARS ? 1 : 0, now(), r.reco_id));
       continue;
     }
 
-    const text = await driveExportText(env, guild, s.doc_id!);
-    const chars = Math.max(0, text.length - s.template_chars);
-    // wrote stays internal (drives reminders + the progress panel) even
-    // though it no longer has a sheet column.
-    const wrote = chars >= WROTE_MIN_CHARS ? 1 : 0;
-    if (wrote !== s.wrote) wroteChanged = true;
+    const text = await driveExportText(env, guild, r.doc_id!);
+    const chars = Math.max(0, text.length - r.template_chars);
     stmts.push(env.DB.prepare(
-      'UPDATE signups SET last_edited = ?1, char_count = ?2, wrote = ?3, doc_missing = 0, synced_at = ?4, updated_at = ?4 WHERE signup_id = ?5',
-    ).bind(mtime, chars, wrote, now(), s.signup_id));
-    if (s.row_order !== null) {
-      cells.push({
-        rowIndex: s.row_order,
-        length: lengthCell({ ...s, char_count: chars, doc_missing: 0 }),
-      });
-    }
+      `UPDATE recos SET last_edited = ?1, char_count = ?2, wrote = ?3, doc_missing = 0,
+         synced_at = ?4, updated_at = ?4 WHERE reco_id = ?5`,
+    ).bind(mtime, chars, chars >= WROTE_MIN_CHARS ? 1 : 0, now(), r.reco_id));
   }
 
   await env.DB.batch(stmts);
-  await writeStatusCells(env, guild, event, items, cells).catch((e) => {
+
+  // Roll each touched participant up: "started writing" means every one of
+  // their reviews has content, which is what the reminders chase.
+  const before = await countStarted(env, event.event_id);
+  for (const signupId of touched) {
+    await env.DB.prepare(
+      `UPDATE signups SET
+         wrote = (SELECT CASE WHEN COUNT(*) > 0 AND MIN(wrote) = 1 THEN 1 ELSE 0 END
+                  FROM recos WHERE signup_id = ?1 AND status != 'DECLINED' AND doc_id IS NOT NULL),
+         char_count = (SELECT COALESCE(SUM(char_count), 0)
+                       FROM recos WHERE signup_id = ?1 AND status != 'DECLINED'),
+         doc_missing = (SELECT CASE WHEN COUNT(*) > 0 THEN 1 ELSE 0 END
+                        FROM recos WHERE signup_id = ?1 AND status != 'DECLINED' AND doc_missing = 1),
+         synced_at = ?2, updated_at = ?2
+       WHERE signup_id = ?1`,
+    ).bind(signupId, now()).run();
+  }
+
+  const items = await getItems(env, event.event_id);
+  const rows = await Promise.all([...touched].map(async (signupId) => ({
+    row: (await env.DB.prepare('SELECT * FROM signups WHERE signup_id = ?1')
+      .bind(signupId).first<SignupRow>())!,
+    recos: (await env.DB.prepare('SELECT * FROM recos WHERE signup_id = ?1 ORDER BY slot')
+      .bind(signupId).all<RecoRow>()).results,
+  })));
+  await writeRecoRows(env, guild, event, items, rows.filter((r) => r.row)).catch((e) => {
     console.error('sync cells write failed (non-fatal)', e);
   });
 
   const left = await env.DB.prepare(
-    'SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND doc_id IS NOT NULL AND (synced_at IS NULL OR synced_at < ?2)',
+    `SELECT COUNT(*) AS n FROM recos WHERE event_id = ?1 AND doc_id IS NOT NULL
+       AND (synced_at IS NULL OR synced_at < ?2)`,
   ).bind(event.event_id, job.created_at).first<{ n: number }>();
   if ((left?.n ?? 0) === 0) {
     await markDone(env, job);
     await healSheet(env, guild, event); // periodic convergence for the whole sheet
   }
-  if (wroteChanged || (left?.n ?? 0) === 0) {
+  if ((await countStarted(env, event.event_id)) !== before || (left?.n ?? 0) === 0) {
     await repaintPanels(env, cfg, guild.guild_id); // progress fraction changed (§8.5)
   }
 }
+
+const countStarted = async (env: Env, eventId: number): Promise<number> => {
+  const r = await env.DB.prepare('SELECT COALESCE(SUM(wrote), 0) AS n FROM signups WHERE event_id = ?1')
+    .bind(eventId).first<{ n: number }>();
+  return r?.n ?? 0;
+};
 
 // ----------------------------------------------------------------- finish
 

@@ -11,7 +11,7 @@ import {
 import { drainJobs } from './jobs';
 import { repaintPanels } from './panels';
 import { adoptSignupOrder } from './validate';
-import { buildLoops, now, ts, type LoopMap } from './util';
+import { buildLoops, now, truncate, ts, type LoopMap } from './util';
 
 export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Promise<void> {
   const minute = new Date(scheduledTimeMs).getUTCMinutes();
@@ -137,7 +137,6 @@ interface DueReminder {
   signup_id: number;
   row_order: number | null;
   wrote: number;
-  doc_url: string | null;
   declines_used: number;
 }
 
@@ -154,7 +153,7 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
     `SELECT r.id, r.event_id, r.user_id, r.kind, r.due_at,
             e.guild_id, e.state, e.review_deadline, e.reco_deadline, e.dm_mirror, e.max_declines,
             s.thread_id, s.dm_channel_id, s.signup_id, s.row_order, s.wrote,
-            s.doc_url, s.declines_used
+            s.declines_used
      FROM reminders r
      JOIN events e ON e.event_id = r.event_id AND e.state IN ('RECOMMENDING', 'RUNNING')
      JOIN signups s ON s.event_id = r.event_id AND s.user_id = r.user_id
@@ -233,7 +232,8 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         done.push(r.id);
         continue;
       }
-      const titles = activeRecos(myRecos).map((x: RecoRow) => x.title ?? '?');
+      const live = activeRecos(myRecos);
+      const titles = live.map((x: RecoRow) => x.title ?? '?');
       const anime = titles.length ? titles.join(', ') : 'your assigned anime';
       const deadline = r.review_deadline ?? r.due_at;
       const daysLeft = Math.max(1, Math.round((deadline - r.due_at) / 86400));
@@ -243,7 +243,14 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
           ? `⏰ **${daysLeft} day(s) left** — don't forget to finish your review of **${anime}**.`
           : `⏰ **${daysLeft} day(s) left** for **${anime}** — your review doc is still empty.`;
       deadlineLine = `\nDeadline: ${ts(deadline)} (${ts(deadline, 'R')})`;
-      components = r.doc_url ? [row(linkBtn(r.doc_url, '📝 Open your doc'))] : [];
+      // One doc per anime (v6) — one button each, named when there are several.
+      const docs = live.filter((x) => x.doc_url);
+      components = docs.length
+        ? [row(...docs.map((x) => linkBtn(
+            x.doc_url!,
+            docs.length === 1 ? '📝 Open your doc' : `📝 Review: ${truncate(x.title ?? 'your anime', 55)}`,
+          )))]
+        : [];
     }
 
     const payload = { content: `<@${r.user_id}> ${text}${deadlineLine}`, components };

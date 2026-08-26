@@ -277,8 +277,8 @@ export async function recoPick(c: HCtx): Promise<Response> {
   return respond.update({
     content: `Send this pick to **${giftee.display_name}**?`,
     embeds: [embed({
+      // No title url — the title stays plain; [MAL] lives in the body.
       title: candLabel(chosen),
-      url: chosen.url,
       description: [
         chosen.title_en && chosen.title_en !== chosen.title ? chosen.title_en : null,
         `${chosen.type ?? '?'} · ${chosen.episodes ?? '?'} episodes · [MAL](${chosen.url})`,

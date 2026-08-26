@@ -50,13 +50,16 @@ export interface Layout {
   lastCol: number;
 }
 
-/** Columns per recommendation slot: Recommendation, Rec. Status, Score. */
-const PER_RECO = 3;
+/** Columns per slot: Recommendation, Rec. Status, Score, Review Link, Review Length. */
+const PER_RECO = 5;
+
+/** Hard cap on how many anime one participant may ask for (v6). */
+export const MAX_PICKS = 3;
 
 /** How many recommendation column-groups the sheet needs: the largest
  *  "picks I want" among the participants (each may choose their own). */
 export const sheetSlots = (rows: Array<{ max_recos: number }>): number =>
-  Math.max(1, ...rows.map((r) => r.max_recos || 1));
+  Math.min(MAX_PICKS, Math.max(1, ...rows.map((r) => r.max_recos || 1)));
 
 export function layoutOf(items: FormItem[], maxRecos = 1): Layout {
   const k = items.length;
@@ -67,10 +70,10 @@ export function layoutOf(items: FormItem[], maxRecos = 1): Layout {
     maxRecos: n,
     groupCol: FIXED + k + 1,      // manager-editable loop membership
     santaCol: FIXED + k + 2,      // derived: next row within the group
-    recoCol,                      // slot 1 starts here; slot j at recoCol + (j-1)*3
-    linkCol: recoCol + n * PER_RECO,
-    lengthCol: recoCol + n * PER_RECO + 1, // "Review Length" — chars minus template
-    lastCol: recoCol + n * PER_RECO + 1,
+    recoCol,                      // slot 1 starts here; slot j at recoCol + (j-1)*PER_RECO
+    linkCol: recoCol + 3,         // slot 1's Review Link
+    lengthCol: recoCol + 4,       // slot 1's Review Length
+    lastCol: recoCol + n * PER_RECO - 1,
   };
 }
 
@@ -82,14 +85,17 @@ export function headerRow(items: FormItem[], maxRecos = 1): string[] {
   const n = Math.max(1, maxRecos);
   const recoHeaders: string[] = [];
   for (let j = 1; j <= n; j++) {
-    // A single-pick event keeps the unnumbered v3 headers.
+    // A single-pick event keeps the unnumbered headers.
     const sfx = n > 1 ? ` ${j}` : '';
-    recoHeaders.push(`Recommendation${sfx}`, `Rec. Status${sfx}`, `Score${sfx}`);
+    recoHeaders.push(
+      `Recommendation${sfx}`, `Rec. Status${sfx}`, `Score${sfx}`,
+      `Review Link${sfx}`, `Review Length${sfx}`,
+    );
   }
   return [
     'Row #', 'User ID 🔑', 'Username', 'MAL/AniList',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Group', 'Secret Santa', ...recoHeaders, 'Review Link', 'Review Length',
+    'Group', 'Secret Santa', ...recoHeaders,
   ];
 }
 
@@ -119,13 +125,36 @@ export function recoStatusCell(
 }
 
 /** Review Length cell: chars written beyond the template; flags deleted docs. */
-export function lengthCell(s: Pick<SignupRow, 'doc_id' | 'doc_missing' | 'char_count'>): string | number {
-  if (s.doc_missing) return '⚠ missing';
-  return s.doc_id ? s.char_count : '';
+export function lengthCell(
+  r: Pick<RecoRow, 'doc_id' | 'doc_missing' | 'char_count'> | undefined,
+): string | number {
+  if (!r) return '';
+  if (r.doc_missing) return '⚠ missing';
+  return r.doc_id ? r.char_count : '';
 }
 
 export function scoreCell(r: Pick<RecoRow, 'score'> | undefined): string | number {
   return r?.score ?? '';
+}
+
+/** The per-slot block of one participant's row: 5 cells per slot. */
+export function recoRowCells(s: SignupRow, recos: RecoRow[], slots: number): unknown[] {
+  // Live picks fill the columns left to right — declined ones leave no gap;
+  // their count rides in the first empty status cell instead.
+  const live = activeRecos(recos).sort((a, b) => a.slot - b.slot);
+  const declines = declinedRecos(recos).length;
+  const cells: unknown[] = [];
+  for (let j = 0; j < Math.max(1, slots); j++) {
+    const r = live[j];
+    cells.push(
+      recoCell(r),
+      recoStatusCell(r, r ? 0 : (j === live.length ? declines : 0)),
+      scoreCell(r),
+      r?.doc_url ?? '',
+      lengthCell(r),
+    );
+  }
+  return cells;
 }
 
 function dataRow(
@@ -133,15 +162,6 @@ function dataRow(
   recos: RecoRow[], slots: number,
 ): unknown[] {
   const answers = answersOf(s);
-  // Live picks fill the columns left to right — declined ones leave no gap;
-  // their count rides in the first empty status cell instead.
-  const live = activeRecos(recos).sort((a, b) => a.slot - b.slot);
-  const declines = declinedRecos(recos).length;
-  const recoCells: unknown[] = [];
-  for (let j = 0; j < Math.max(1, slots); j++) {
-    const r = live[j];
-    recoCells.push(recoCell(r), recoStatusCell(r, r ? 0 : (j === live.length ? declines : 0)), scoreCell(r));
-  }
   return [
     idx + 1,
     s.user_id, // RAW valueInputOption keeps the 18-digit id a string (precision!)
@@ -150,9 +170,7 @@ function dataRow(
     ...items.map((it) => answers[String(it.item_id)] ?? ''),
     s.group_no,
     santa ? santa.display_name : '',
-    ...recoCells,
-    s.doc_url ?? '',
-    lengthCell(s),
+    ...recoRowCells(s, recos, slots),
   ];
 }
 
@@ -200,14 +218,16 @@ export async function rewriteSheetFromDb(
   await rewriteSheet(env, guild, event, items, ordered, recos);
 }
 
+/** Written once, on a brand-new empty sheet — hence a single slot. Every later
+ *  signup widens the block through `rewriteSheet`, which rewrites the header. */
 export async function writeHeader(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
 ): Promise<void> {
   if (!event.sheet_id) return;
-  const header = headerRow(items, event.max_recos);
+  const header = headerRow(items, 1);
   await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${colLetter(header.length)}1`), [header]);
   if (event.sheet_gid !== null) {
-    const layout = layoutOf(items, event.max_recos);
+    const layout = layoutOf(items, 1);
     await addHeaderNotes(env, guild, event.sheet_id, event.sheet_gid, [
       { colIndex: 1, note: 'Immutable key — do not edit this column.' },
       {
@@ -233,72 +253,41 @@ export async function readSheetRows(
   if (!event.sheet_id) return [];
   // Validate only reads up to the Group column, so the (variable) slot block
   // beyond it never affects the range's meaning.
-  const layout = layoutOf(items, 5);
+  const layout = layoutOf(items, MAX_PICKS);
   return valuesGet(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol)}1000`));
 }
 
-/** Batched per-tick cell writes: Review Link during Launch. */
-export function writeReviewLinks(
-  env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
-  rows: Array<{ rowIndex: number; url: string }>,
-): Promise<unknown> {
-  if (!event.sheet_id || rows.length === 0) return Promise.resolve();
-  const col = colLetter(layoutOf(items, event.max_recos).linkCol);
-  return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: a1(`${col}${r.rowIndex + 2}`),
-    values: [[r.url]],
-  })));
-}
-
-/** Batched per-tick cell writes: Review Length during sync. */
-export function writeStatusCells(
-  env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
-  rows: Array<{ rowIndex: number; length: number | string }>,
-): Promise<unknown> {
-  if (!event.sheet_id || rows.length === 0) return Promise.resolve();
-  const col = colLetter(layoutOf(items, event.max_recos).lengthCol);
-  return valuesBatchUpdate(env, guild, event.sheet_id, rows.map((r) => ({
-    range: a1(`${col}${r.rowIndex + 2}`),
-    values: [[r.length]],
-  })));
-}
-
 /**
- * Rewrite one participant's whole recommendation block — sends, accepts and
- * declines all shift the live picks around, so the row is written as a unit.
- * Reads the person's current rows itself; best-effort, healed by the
- * job-completion rewrite.
+ * Rewrite whole recommendation blocks, one A1 range per participant row —
+ * every send / accept / decline / score / doc-link / sync shifts cells inside
+ * the block, so it is always written as a unit. Best-effort; the
+ * job-completion rewrite heals anything that failed.
  */
+export async function writeRecoRows(
+  env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
+  rows: Array<{ row: SignupRow; recos: RecoRow[] }>,
+): Promise<void> {
+  const usable = rows.filter((r) => r.row.row_order !== null);
+  if (!event.sheet_id || usable.length === 0) return;
+  const widest = await env.DB
+    .prepare('SELECT COALESCE(MAX(max_recos), 1) AS n FROM signups WHERE event_id = ?1')
+    .bind(event.event_id).first<{ n: number }>();
+  const slots = Math.min(MAX_PICKS, Math.max(1, widest?.n ?? 1));
+  const layout = layoutOf(items, slots);
+  const from = colLetter(layout.recoCol);
+  const to = colLetter(layout.recoCol + slots * PER_RECO - 1);
+  await valuesBatchUpdate(env, guild, event.sheet_id, usable.map(({ row, recos }) => ({
+    range: a1(`${from}${row.row_order! + 2}:${to}${row.row_order! + 2}`),
+    values: [recoRowCells(row, recos, slots)],
+  })));
+}
+
+/** Same, for a single participant — loads their picks itself. */
 export async function writeRecoCells(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], row: SignupRow,
 ): Promise<void> {
   if (!event.sheet_id || row.row_order === null) return;
   const res = await env.DB.prepare('SELECT * FROM recos WHERE signup_id = ?1 ORDER BY slot')
     .bind(row.signup_id).all<RecoRow>();
-  const live = activeRecos(res.results);
-  const declines = declinedRecos(res.results).length;
-  const slots = Math.max(row.max_recos || 1, live.length);
-  const layout = layoutOf(items, slots);
-  const cells: unknown[] = [];
-  for (let j = 0; j < slots; j++) {
-    const r = live[j];
-    cells.push(recoCell(r), recoStatusCell(r, r ? 0 : (j === live.length ? declines : 0)), scoreCell(r));
-  }
-  const from = layout.recoCol;
-  await valuesUpdate(env, guild, event.sheet_id,
-    a1(`${colLetter(from)}${row.row_order + 2}:${colLetter(from + slots * PER_RECO - 1)}${row.row_order + 2}`),
-    [cells]);
-}
-
-/** Score cells for one participant, positioned by live-pick order. */
-export function writeScoreCells(
-  env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
-  rowIndex: number, live: RecoRow[], slots: number,
-): Promise<unknown> {
-  if (!event.sheet_id || live.length === 0) return Promise.resolve();
-  const layout = layoutOf(items, Math.max(1, slots));
-  return valuesBatchUpdate(env, guild, event.sheet_id, live.map((r, j) => {
-    const col = colLetter(slotCol(layout, j + 1) + PER_RECO - 1);
-    return { range: a1(`${col}${rowIndex + 2}`), values: [[scoreCell(r)]] };
-  }));
+  await writeRecoRows(env, guild, event, items, [{ row, recos: res.results }]);
 }

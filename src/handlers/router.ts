@@ -17,7 +17,7 @@ const PARTICIPANT_ACTIONS = new Set([
   'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart', 'signup_force',
   'edit_signup', 'withdraw', 'score', 'cancel',
   'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no', 'reco_me',
-  'reco_undo', 'reco_undo_pick', 'signup_picks',
+  'reco_undo', 'reco_undo_pick',
 ]);
 const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score', 'reco_kw']);
 
@@ -139,7 +139,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_force': return su.signupForce(c);
-    case 'signup_picks': return su.signupPicks(c);
     case 'signup_confirm': return su.signupConfirm(c);
     case 'score': return su.scoreModal(c);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
