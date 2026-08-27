@@ -19,8 +19,8 @@ import { searchAnime } from '../mal';
 import type { DraftRow, EventRow, RecoRow, SignupRow } from '../types';
 import { modalFields } from '../types';
 import {
-  btn, deleteMessage, editMessage, editOriginal, embed, modalText, postMessage, respond, row,
-  stringSelect, Style,
+  btn, deleteMessage, editMessage, editOriginal, embed, followUp, modalText, postMessage, respond,
+  row, stringSelect, Style,
 } from '../discord';
 import {
   activeRecos, declinedRecos, finalRecos, getItems, loopContext, pendingRecos, picksLeft, recosOf,
@@ -430,15 +430,26 @@ export async function recoApprove(c: HCtx, ownerArg: string, recoArg: string): P
     await refreshPanel(c, e, me.signup_id);
     await refreshPanel(c, e, santa.signup_id);
     await milestoneRepaint(c, e);
-  });
+    // The card is gone and the status panel sits far above the thread — say so
+    // here, or accepting looks like nothing happened.
+    await followUp(c.env, c.i.token, {
+      content: `😊 **${animeLabel(fresh)}** is yours — it's on your status panel now.` +
+        (me.declines_used < e.max_declines
+          ? ' You can still take it back with **I\'ll change my mind😞** until launch.'
+          : ''),
+    }).catch(() => {});
+  }, { reportVia: 'followup' });
   return respond.deferUpdate();
 }
 
-/** Delete an answered pick card (the status panel carries the outcome). */
+/** Delete an answered pick card (the status panel carries the outcome) and
+ *  forget its id, so a later cleanup doesn't 404 on a message already gone. */
 async function removeCard(c: HCtx, giftee: SignupRow, reco: RecoRow): Promise<void> {
   if (!giftee.thread_id || !reco.msg_id) return;
   await deleteMessage(c.env, giftee.thread_id, reco.msg_id)
     .catch((err) => console.error('pick card cleanup failed', err));
+  await c.env.DB.prepare('UPDATE recos SET msg_id = NULL WHERE reco_id = ?1')
+    .bind(reco.reco_id).run().catch(() => {});
 }
 
 /**
@@ -446,6 +457,33 @@ async function removeCard(c: HCtx, giftee: SignupRow, reco: RecoRow): Promise<vo
  * "I'll change my mind😞" for accepted ones. Spends one decline from the
  * per-person budget and frees a slot for the Santa.
  */
+/**
+ * Report a decline that did NOT happen. When the click came from a pick card
+ * (a public thread message), the notice must NOT go through editOriginal: that
+ * would replace the card — artwork, title and the Thank you!😊 button — with a
+ * one-line note while the pick is still PENDING, leaving the giftee no way to
+ * accept it. Send an ephemeral instead and re-render the card so its buttons
+ * match the budget that actually remains.
+ */
+async function declineFailed(
+  c: HCtx, e: EventRow, me: SignupRow, target: RecoRow, viaPanel: boolean, content: string,
+): Promise<void> {
+  if (viaPanel) {
+    await editOriginal(c.env, c.i.token, { content, embeds: [], components: [] }).catch(() => {});
+    return;
+  }
+  await followUp(c.env, c.i.token, { content }).catch(() => {});
+  if (!me.thread_id || !target.msg_id) return;
+  const fresh = await c.env.DB.prepare('SELECT * FROM recos WHERE reco_id = ?1')
+    .bind(target.reco_id).first<RecoRow>();
+  const spent = await c.env.DB.prepare('SELECT declines_used FROM signups WHERE signup_id = ?1')
+    .bind(me.signup_id).first<{ declines_used: number }>();
+  if (!fresh || fresh.status !== 'PENDING') return; // the card is stale; the panel carries the truth
+  await editMessage(c.env, me.thread_id, target.msg_id,
+    recoCard(e, { ...me, declines_used: spent?.declines_used ?? me.declines_used }, fresh),
+  ).catch((err) => console.error('pick card re-render failed', err));
+}
+
 async function declineReco(c: HCtx, ctx: RecoCtx, target: RecoRow, viaPanel: boolean): Promise<void> {
   const { e, me, santa } = ctx;
   // Spend the budget first, conditionally — that single UPDATE is what keeps
@@ -455,9 +493,8 @@ async function declineReco(c: HCtx, ctx: RecoCtx, target: RecoRow, viaPanel: boo
     'UPDATE signups SET declines_used = declines_used + 1, updated_at = ?1 WHERE signup_id = ?2 AND declines_used < ?3',
   ).bind(now(), me.signup_id, e.max_declines).run();
   if ((spend.meta.changes ?? 0) === 0) {
-    await editOriginal(c.env, c.i.token, {
-      content: '🔒 You have no Sorry😞s left — this pick stays.', embeds: [], components: [],
-    }).catch(() => {});
+    await declineFailed(c, e, me, target, viaPanel,
+      '🔒 You have no Sorry😞s left — this pick stays. You can still accept it with **Thank you!😊**.');
     return;
   }
   // The state subquery closes the launch race: once the event leaves
@@ -471,9 +508,8 @@ async function declineReco(c: HCtx, ctx: RecoCtx, target: RecoRow, viaPanel: boo
     await c.env.DB.prepare('UPDATE signups SET declines_used = declines_used - 1 WHERE signup_id = ?1 AND declines_used > 0')
       .bind(me.signup_id).run();
     await refreshPanel(c, e, me.signup_id);
-    await editOriginal(c.env, c.i.token, {
-      content: '↻ That pick already moved on — your status panel is up to date.', embeds: [], components: [],
-    }).catch(() => {});
+    await declineFailed(c, e, me, target, viaPanel,
+      '↻ That pick already moved on — your status panel is up to date.');
     return;
   }
   const declined: RecoRow = { ...target, status: 'DECLINED', final_via: null, score: null };
@@ -532,7 +568,7 @@ export async function recoDecline(c: HCtx, ownerArg: string, recoArg: string): P
   if (!target || target.status === 'DECLINED') {
     return respond.ephemeral({ content: '↻ That pick is no longer yours to decline.' });
   }
-  bg(c, () => declineReco(c, ctx, target, false));
+  bg(c, () => declineReco(c, ctx, target, false), { reportVia: 'followup' });
   return respond.deferUpdate();
 }
 

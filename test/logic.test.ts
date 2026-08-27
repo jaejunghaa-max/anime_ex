@@ -297,14 +297,56 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
   const me = signup({ signup_id: 1, user_id: 'u1', display_name: 'A' });
   const giftee = signup({ signup_id: 2, user_id: 'u2', display_name: 'B', max_recos: 2 });
 
-  it('the status panel is a SINGLE embed carrying mission + approvals', () => {
+  type Panel = {
+    embeds: Array<{ title?: string; description: string }>;
+    components: Array<{ components: Array<{ custom_id?: string; label?: string }> }>;
+  };
+
+  it('splits mission and own-anime into two embeds so neither truncates the other', () => {
     const panel = statusPanel(event, me, giftee, [], [], [
       reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
-    ]) as { embeds: Array<{ title: string; description: string }> };
-    expect(panel.embeds).toHaveLength(1);
+    ]) as Panel;
+    expect(panel.embeds).toHaveLength(2);
     expect(panel.embeds[0]!.title).toContain('Secret Santa of B');
-    expect(panel.embeds[0]!.description).toContain('Anime you approved');
-    expect(panel.embeds[0]!.description).toContain('Kaiba');
+    expect(panel.embeds[1]!.description).toContain('Anime you approved');
+    expect(panel.embeds[1]!.description).toContain('Kaiba');
+  });
+
+  it('long visible answers can no longer push the reader\'s own section past the cap', () => {
+    const items: FormItem[] = Array.from({ length: 8 }, (_, i) => ({
+      item_id: i + 1, event_id: 1, position: i + 1, label: `Q${i + 1}`,
+      type: 'FIB', description: null, options_json: null, visible_to_recommender: 1,
+    }));
+    const answers = Object.fromEntries(items.map((it) => [String(it.item_id), 'x'.repeat(500)]));
+    const chatty = signup({
+      signup_id: 2, user_id: 'u2', display_name: 'B', max_recos: 2,
+      answers_json: JSON.stringify(answers),
+    });
+    const panel = statusPanel(event, me, chatty, items, [], [
+      reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
+    ]) as Panel;
+    // The mission embed is the one that overflows; the reader's half is intact.
+    expect(panel.embeds[0]!.description.length).toBeLessThanOrEqual(4096);
+    expect(panel.embeds[1]!.description).toContain('Kaiba');
+    expect(panel.embeds[1]!.description).toContain('Sorry😞s left');
+  });
+
+  it('offers an accept button per pending pick, so a lost card never strands the giftee', () => {
+    const panel = statusPanel(event, me, giftee, [], [], [
+      reco({ reco_id: 9, signup_id: 1, title: 'Kaiba', status: 'PENDING' }),
+      reco({ reco_id: 10, signup_id: 1, slot: 2, title: 'Dandadan', status: 'PENDING' }),
+    ]) as Panel;
+    const ids = panel.components.flatMap((r) => r.components.map((b) => b.custom_id));
+    expect(ids).toContain('ax:reco_ok:u1:9');
+    expect(ids).toContain('ax:reco_ok:u1:10');
+  });
+
+  it('shows no accept buttons when nothing is pending', () => {
+    const panel = statusPanel(event, me, giftee, [], [], [
+      reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
+    ]) as Panel;
+    const ids = panel.components.flatMap((r) => r.components.map((b) => b.custom_id));
+    expect(ids.some((id) => id?.startsWith('ax:reco_ok:'))).toBe(false);
   });
 
   it('the assignment header bullets the picks the same way for 1 and for many', () => {

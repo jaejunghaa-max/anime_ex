@@ -71,12 +71,19 @@ async function accessToken(env: Env, guild: GuildRow): Promise<string> {
 /**
  * Authenticated Google REST call. On a 401 the cached token is dropped and the
  * call retried once with a fresh token; a second 401 means the grant is dead.
+ *
+ * The auth and rate-limit budgets are counted separately: sharing one counter
+ * meant a 429 retry consumed the auth budget, so the very first 401 after a
+ * transient failure was reported as a revoked grant — sending the manager off
+ * to re-authorize a connection that was never broken.
  */
 export async function gapi<T = unknown>(
   env: Env, guild: GuildRow, method: string, url: string, body?: unknown,
   opts: { raw?: boolean } = {},
 ): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
+  let authRetries = 0;
+  let backoffRetries = 0;
+  for (;;) {
     const token = await accessToken(env, guild);
     const res = await fetch(url, {
       method,
@@ -85,11 +92,15 @@ export async function gapi<T = unknown>(
     });
     if (res.status === 401) {
       invalidateTokenCache(guild.guild_id);
-      if (attempt === 0) continue;
+      if (authRetries < 1) {
+        authRetries++;
+        continue;
+      }
       throw new GoogleAuthError('access rejected twice');
     }
-    if ((res.status === 429 || res.status >= 500) && attempt < 2) {
-      await sleep(700 * (attempt + 1));
+    if ((res.status === 429 || res.status >= 500) && backoffRetries < 2) {
+      backoffRetries++;
+      await sleep(700 * backoffRetries);
       continue;
     }
     if (!res.ok) throw new GoogleApiError(res.status, url, await res.text().catch(() => ''));

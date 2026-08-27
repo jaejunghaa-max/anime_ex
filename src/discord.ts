@@ -13,11 +13,18 @@ export class DiscordApiError extends Error {
   }
 }
 
-/** REST call with one retry on 429 and one on 5xx. Returns undefined on 204. */
+/**
+ * REST call with up to two retries on 429 and one on 5xx. The two budgets are
+ * counted separately on purpose: a shared counter lets a rate-limit retry eat
+ * the server-error budget, so the first 5xx after a 429 would never be retried.
+ * Returns undefined on 204.
+ */
 export async function dapi<T = unknown>(
   env: Env, method: string, path: string, body?: unknown,
 ): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
+  let rateLimitRetries = 0;
+  let serverErrorRetries = 0;
+  for (;;) {
     const res = await fetch(API + path, {
       method,
       headers: {
@@ -27,12 +34,14 @@ export async function dapi<T = unknown>(
       },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (res.status === 429 && attempt < 2) {
+    if (res.status === 429 && rateLimitRetries < 2) {
+      rateLimitRetries++;
       const data = (await res.json().catch(() => ({}))) as { retry_after?: number };
       await sleep(Math.min(5000, ((data.retry_after ?? 1) * 1000) + 50));
       continue;
     }
-    if (res.status >= 500 && attempt < 1) {
+    if (res.status >= 500 && serverErrorRetries < 1) {
+      serverErrorRetries++;
       await sleep(600);
       continue;
     }

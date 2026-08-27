@@ -3,7 +3,7 @@
 // edits the deferred ephemeral when it finishes — or with a caught error.
 
 import type { Cfg, Env, EventRow, GuildRow, Interaction } from '../types';
-import { editOriginal, respond } from '../discord';
+import { editOriginal, followUp, respond } from '../discord';
 import { GOOGLE_RECONNECT_MSG, GoogleAuthError } from '../google';
 import { repaintPanels } from '../panels';
 import { shortRef } from '../util';
@@ -20,8 +20,21 @@ export interface HCtx {
   isManager: boolean;
 }
 
-/** Run deferred work; on failure edit the deferred message with a short ref. */
-export function bg(c: HCtx, work: () => Promise<void>): void {
+/**
+ * Run deferred work; on failure report it with a short ref.
+ *
+ * Where the failure notice goes depends on what `@original` points at. After a
+ * DEFER_UPDATE the original IS the message the button lives on — for a pick
+ * card in a participant's thread that is a PUBLIC message, and editing it with
+ * empty embeds/components would delete the card's artwork and its Thank you!😊
+ * button while the pick is still unanswered. Handlers deferring on a public
+ * message pass `reportVia: 'followup'` so the error arrives as a separate
+ * ephemeral and the card survives.
+ */
+export function bg(
+  c: HCtx, work: () => Promise<void>,
+  opts: { reportVia?: 'original' | 'followup' } = {},
+): void {
   c.ec.waitUntil(
     work().catch(async (e: unknown) => {
       const ref = shortRef();
@@ -29,7 +42,11 @@ export function bg(c: HCtx, work: () => Promise<void>): void {
       const content = e instanceof GoogleAuthError
         ? GOOGLE_RECONNECT_MSG
         : `⚠ Something went wrong (\`${ref}\`) — try again.`;
-      await editOriginal(c.env, c.i.token, { content, embeds: [], components: [] }).catch(() => {});
+      if (opts.reportVia === 'followup') {
+        await followUp(c.env, c.i.token, { content }).catch(() => {});
+      } else {
+        await editOriginal(c.env, c.i.token, { content, embeds: [], components: [] }).catch(() => {});
+      }
     }),
   );
 }

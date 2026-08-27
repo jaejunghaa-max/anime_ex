@@ -13,8 +13,8 @@
 
 import type { EventRow, FormItem, RecoRow, SignupRow } from './types';
 import { btn, embed, linkBtn, row, Style } from './discord';
-import { activeRecos, answersOf, declinedRecos, finalRecos, pendingRecos, picksLeft } from './db';
-import { ts } from './util';
+import { activeRecos, answersOf, finalRecos, pendingRecos, picksLeft } from './db';
+import { truncate, ts } from './util';
 
 function visibleAnswerLines(giftee: SignupRow, items: FormItem[]): string | null {
   const answers = answersOf(giftee);
@@ -36,9 +36,10 @@ const statusTag = (r: RecoRow): string =>
     : 'waiting for their reply ⏳';
 
 /**
- * The one live panel in a participant's thread during PREPARING/RECOMMENDING —
- * a SINGLE embed: mission on top, the anime they've accepted below, controls
- * last.
+ * The one live panel in a participant's thread during PREPARING/RECOMMENDING:
+ * the Santa mission in the first embed, the anime *they* were given in the
+ * second, controls last. The split is deliberate — a single description caps
+ * at 4096 characters, which eight free-text form answers can fill on their own.
  */
 export function statusPanel(
   event: EventRow, me: SignupRow, giftee: SignupRow, items: FormItem[],
@@ -87,15 +88,33 @@ export function statusPanel(
     buttons.push(btn(`ax:reco_undo:${me.user_id}`, "I'll change my mind😞", Style.DANGER));
   }
 
+  // Accepting must be possible from the panel, not only from the pick card:
+  // cards are transient (deleted on answer, replaced on error, lost when a
+  // thread is pruned), and without this the panel could list a pick as
+  // "waiting for your reply" while offering no way to reply to it.
+  const acceptRow: unknown[] = myPending.slice(0, 5).map((r) =>
+    btn(
+      `ax:reco_ok:${me.user_id}:${r.reco_id}`,
+      myPending.length === 1 ? 'Thank you!😊' : `😊 ${truncate(animeLabel(r), 60)}`,
+      Style.SUCCESS,
+    ));
+
   return {
     content: `<@${me.user_id}> your secret mission 🎯`,
     embeds: [
+      // Two embeds, not one 4096-char description: form answers are free text
+      // and eight visible items can fill the cap on their own, which used to
+      // truncate away exactly the half about the reader.
       embed({
         title: `🎯 You are the Secret Santa of ${giftee.display_name}`,
-        description: `${missionLines}\n\n${mineLines}`,
+        description: missionLines,
       }),
+      embed({ description: mineLines }),
     ],
-    components: buttons.length ? [row(...buttons)] : [],
+    components: [
+      ...(buttons.length ? [row(...buttons)] : []),
+      ...(acceptRow.length ? [row(...acceptRow)] : []),
+    ],
   };
 }
 
@@ -135,9 +154,6 @@ export const answerNotice = (santa: SignupRow, giftee: SignupRow, reco: RecoRow)
     ? `<@${santa.user_id}> 😞 **${giftee.display_name}** said **Sorry😞** to **${animeLabel(reco)}**.`
     : `<@${santa.user_id}> 🎉 **${giftee.display_name}** said **Thank you!😊** to **${animeLabel(reco)}**.`,
 });
-
-/** Button labels cap at 80 chars — keep long titles readable. */
-const short = (s: string, n = 60): string => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 
 /**
  * Launch delivers the assignment as a small SEQUENCE of thread messages, so
@@ -190,12 +206,15 @@ export function animeCard(r: RecoRow): Record<string, unknown> {
     embeds: [embed({
       // No title url — the title stays unclickable; [MAL] lives in the body.
       title: label,
-      description: animeLine(r),
+      description: animeLine(r) +
+        (r.final_via === 'FORCED'
+          ? '\n*Locked in at launch — this one was still waiting on your reply.*'
+          : ''),
       image: r.image ?? undefined,
     })],
     components: [row(...[
-      r.doc_url ? linkBtn(r.doc_url, `📝 Review: ${short(label, 50)}`) : null,
-      btn(`ax:score:${r.reco_id}`, `⭐ Rate: ${short(label, 53)}`, Style.PRIMARY),
+      r.doc_url ? linkBtn(r.doc_url, `📝 Review: ${truncate(label, 50)}`) : null,
+      btn(`ax:score:${r.reco_id}`, `⭐ Rate: ${truncate(label, 53)}`, Style.PRIMARY),
     ].filter(Boolean) as unknown[])],
   };
 }
@@ -231,6 +250,3 @@ export function revealCard(
   };
 }
 
-/** Kept for the declined-history line in the sheet/status panel. */
-export const declinedTitles = (rows: RecoRow[]): string[] =>
-  declinedRecos(rows).map((r) => animeLabel(r));
