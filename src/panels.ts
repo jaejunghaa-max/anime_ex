@@ -318,8 +318,10 @@ export function renderManagerPanel(
       // add rather than the totals. Pass 2 costs 1 + (their anime) messages.
       const docsLeft = Math.max(0, stats.docsTotal - stats.docsMade);
       const peopleLeft = Math.max(0, stats.count - stats.launched);
-      const messagesLeft = peopleLeft > 0 ? peopleLeft + stats.docsTotal - stats.docsFlipped : 0;
-      const eta = etaMinutes([docsLeft, messagesLeft], cfg.jobBatch);
+      // Each remaining person costs a header plus one message per anime; their
+      // share of the anime is prorated, since which of them are left is unknown.
+      const animeLeft = Math.round((stats.docsTotal * peopleLeft) / Math.max(1, stats.count));
+      const eta = etaMinutes([docsLeft, peopleLeft + animeLeft], cfg.jobBatch);
       return {
         content: '',
         embeds: [embed({
