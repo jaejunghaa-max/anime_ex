@@ -381,14 +381,17 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
   return respond.deferUpdate();
 }
 
-// ------------------------------------------------------------------- score
-// The ⭐ button on the assignment card (private thread). Scores are keyed to
-// the clicking user's own signup (§13.2 — never trusted from the payload),
-// so it always rates the anime *they* were given, out of 10.
+// -------------------------------------------------------------------- rate
+// The ⭐ Rate button on each anime's own panel (private thread). Ratings are
+// keyed to the clicking user's own signup (§13.2 — never trusted from the
+// payload), so a button always rates the anime *they* were given, out of 10.
 
-const SCORE_STATES = ['LAUNCHING', 'RUNNING'] as const;
+const RATE_STATES = ['LAUNCHING', 'RUNNING'] as const;
 
-/** The participant's own anime, in slot order (max 3 — one modal select each). */
+const rateOpen = (e: EventRow | null): boolean =>
+  !!e && RATE_STATES.includes(e.state as (typeof RATE_STATES)[number]);
+
+/** The participant's own anime, in slot order (max 3 — one panel each). */
 async function myRecos(c: HCtx, eventId: number, signupId: number): Promise<RecoRow[]> {
   const res = await c.env.DB
     .prepare('SELECT * FROM recos WHERE event_id = ?1 AND signup_id = ?2 ORDER BY slot')
@@ -396,21 +399,32 @@ async function myRecos(c: HCtx, eventId: number, signupId: number): Promise<Reco
   return activeRecos(res.results);
 }
 
-export async function scoreModal(c: HCtx): Promise<Response> {
+/**
+ * [⭐ Rate: {anime}] on that anime's own panel. The reco id in the custom_id is
+ * a hint only — the row is re-fetched and checked against the CLICKER's signup
+ * (§13.2), so a button pressed in someone else's thread rates nothing.
+ */
+export async function rateModal(c: HCtx, recoArg: string): Promise<Response> {
   const e = c.event;
-  if (!e || !SCORE_STATES.includes(e.state as (typeof SCORE_STATES)[number])) {
+  if (!rateOpen(e)) {
     return stale(c, e && ['CLOSING', 'REVEALED'].includes(e.state)
-      ? 'Reviews are closed — scores are locked in.' : 'Scoring is open while the event is running.');
+      ? 'Reviews are closed — ratings are locked in.' : 'Rating is open while the event is running.');
   }
-  const me = await getSignup(c.env, e.event_id, c.userId);
-  if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
-  const mine = await myRecos(c, e.event_id, me.signup_id);
-  if (mine.length === 0) return respond.ephemeral({ content: 'You have no anime to score yet.' });
-  // One select per anime (≤5 = the modal cap); each optional, so people can
-  // score what they've finished and come back for the rest.
-  return respond.modal('axm:score', mine.length > 1 ? 'Score your anime' : 'Score your given anime',
-    mine.map((r) => modalSelect(`score:${r.reco_id}`, truncate(r.title ?? 'Your anime', 45), [
-      { label: '— no score —', value: '0', default: r.score === null },
+  const me = await getSignup(c.env, e!.event_id, c.userId);
+  if (!me) return respond.ephemeral({ content: 'Only participants can rate their given anime.' });
+  const mine = await myRecos(c, e!.event_id, me.signup_id);
+  if (mine.length === 0) return respond.ephemeral({ content: 'You have no anime to rate yet.' });
+  // No id (pre-v7 button) → fall back to the whole set in one modal.
+  const targets = recoArg
+    ? mine.filter((r) => String(r.reco_id) === recoArg)
+    : mine.slice(0, 5);
+  if (targets.length === 0) {
+    return respond.ephemeral({ content: '↻ That anime is not one of yours — check your thread.' });
+  }
+  const one = targets.length === 1 ? targets[0]! : null;
+  return respond.modal('axm:score', one ? `Rate ${truncate(one.title ?? 'your anime', 34)}` : 'Rate your anime',
+    targets.map((r) => modalSelect(`score:${r.reco_id}`, truncate(r.title ?? 'Your anime', 45), [
+      { label: '— no rating —', value: '0', default: r.score === null },
       ...Array.from({ length: 10 }, (_, i) => 10 - i).map((n) => ({
         label: `${'⭐'.repeat(Math.ceil(n / 2))} ${n} / 10`,
         value: String(n),
@@ -418,19 +432,17 @@ export async function scoreModal(c: HCtx): Promise<Response> {
       })),
     ], {
       required: false,
-      placeholder: r.score !== null ? `Current: ${r.score}/10` : 'Pick a score…',
+      placeholder: r.score !== null ? `Current: ${r.score}/10` : 'Pick a rating…',
     })),
   );
 }
 
-export async function scoreSubmit(c: HCtx): Promise<Response> {
+export async function rateSubmit(c: HCtx): Promise<Response> {
   const e = c.event;
-  if (!e || !SCORE_STATES.includes(e.state as (typeof SCORE_STATES)[number])) {
-    return stale(c, 'Reviews are closed — scores are locked in.');
-  }
-  const me = await getSignup(c.env, e.event_id, c.userId);
-  if (!me) return respond.ephemeral({ content: 'Only participants can score their given anime.' });
-  const mine = await myRecos(c, e.event_id, me.signup_id);
+  if (!rateOpen(e)) return stale(c, 'Reviews are closed — ratings are locked in.');
+  const me = await getSignup(c.env, e!.event_id, c.userId);
+  if (!me) return respond.ephemeral({ content: 'Only participants can rate their given anime.' });
+  const mine = await myRecos(c, e!.event_id, me.signup_id);
   const fields = modalFields(c.i.data?.components);
   const updates: RecoRow[] = [];
   for (const r of mine) {
@@ -443,7 +455,7 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
     updates.push({ ...r, score });
   }
   if (updates.length === 0) {
-    return respond.ephemeral({ content: '⭐ Nothing changed — your scores stay as they were.' });
+    return respond.ephemeral({ content: '⭐ Nothing changed — your ratings stay as they were.' });
   }
   await c.env.DB.batch(updates.map((r) =>
     c.env.DB.prepare('UPDATE recos SET score = ?1, updated_at = ?2 WHERE reco_id = ?3')
@@ -451,16 +463,16 @@ export async function scoreSubmit(c: HCtx): Promise<Response> {
   bg(c, async () => {
     if (me.row_order !== null) {
       // Best-effort row rewrite; a job's self-heal fixes any failure.
-      const items = await getItems(c.env, e.event_id);
-      await writeRecoCells(c.env, c.guild, e, items, me).catch((err: unknown) => {
-        console.error('score cell write failed (self-heal will fix)', err);
+      const items = await getItems(c.env, e!.event_id);
+      await writeRecoCells(c.env, c.guild, e!, items, me).catch((err: unknown) => {
+        console.error('rating cell write failed (self-heal will fix)', err);
       });
     }
     const saved = updates
       .map((r) => `**${r.title}** ${r.score === null ? '— cleared' : `**${r.score}/10**`}`)
       .join(' · ');
     await editOriginal(c.env, c.i.token, {
-      content: `⭐ Saved — ${saved}. You can change scores until reviews close.`,
+      content: `⭐ Saved — ${saved}. You can change ratings until reviews close.`,
     });
   });
   return respond.deferEphemeral();

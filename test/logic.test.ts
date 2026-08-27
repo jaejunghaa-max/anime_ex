@@ -8,7 +8,7 @@ import {
   a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots, slotCol,
 } from '../src/sheet';
 import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
-import { assignmentCard, revealCard, statusPanel } from '../src/cards';
+import { animeCard, assignmentHeader, revealCard, statusPanel } from '../src/cards';
 import { parseGroupCells } from '../src/validate';
 import { modalFields } from '../src/types';
 import type { EventRow, FormItem, RecoRow, SignupRow } from '../src/types';
@@ -203,7 +203,7 @@ describe('sheet layout (§8.3)', () => {
     expect(h[layout.santaCol - 1]).toBe('Secret Santa');
     expect(h[layout.recoCol - 1]).toBe('Recommendation'); // single-pick events stay unnumbered
     expect(h[layout.recoCol]).toBe('Rec. Status');
-    expect(h[layout.recoCol + 1]).toBe('Score');
+    expect(h[layout.recoCol + 1]).toBe('Rating');
     expect(h[layout.linkCol - 1]).toBe('Review Link');
     expect(h[layout.lengthCol - 1]).toBe('Review Length');
     expect(h).not.toContain('Anime');
@@ -218,7 +218,7 @@ describe('sheet layout (§8.3)', () => {
     expect(h[slotCol(layout, 2) - 1]).toBe('Recommendation 2');
     expect(h[slotCol(layout, 3) - 1]).toBe('Recommendation 3');
     expect(h[slotCol(layout, 3)]).toBe('Rec. Status 3');
-    expect(h[slotCol(layout, 3) + 1]).toBe('Score 3');
+    expect(h[slotCol(layout, 3) + 1]).toBe('Rating 3');
     expect(h[slotCol(layout, 3) + 2]).toBe('Review Link 3');
     expect(h[slotCol(layout, 3) + 3]).toBe('Review Length 3');
     expect(h).toHaveLength(layout.lastCol);
@@ -307,36 +307,58 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     expect(panel.embeds[0]!.description).toContain('Kaiba');
   });
 
-  it('the assignment card links one review doc per anime', () => {
-    const mine = [
-      reco({ reco_id: 1, slot: 1, signup_id: 1, title: 'Kaiba', doc_url: 'https://d/1' }),
-      reco({ reco_id: 2, slot: 2, signup_id: 1, title: 'Dandadan', doc_url: 'https://d/2' }),
-    ];
-    const card = assignmentCard(event, me, giftee, mine, []) as {
-      components: Array<{ components: Array<{ url?: string; label: string }> }>;
-    };
-    const links = card.components[0]!.components.filter((b) => b.url);
-    expect(links.map((b) => b.url)).toEqual(['https://d/1', 'https://d/2']);
-    expect(links[0]!.label).toContain('Kaiba');
-    // A single pick keeps the generic wording.
-    const solo = assignmentCard(event, me, giftee, [mine[0]!], []) as {
-      components: Array<{ components: Array<{ url?: string; label: string }> }>;
-    };
-    expect(solo.components[0]!.components.filter((b) => b.url)[0]!.label)
-      .toBe('\ud83d\udcdd Open your review doc');
+  it('the assignment header bullets the picks the same way for 1 and for many', () => {
+    const one = assignmentHeader(event, me, giftee, [], [
+      reco({ reco_id: 5, signup_id: 2, title: 'Kaiba' }),
+    ]) as { embeds: Array<{ title: string; description: string }> };
+    const many = assignmentHeader(event, me, giftee, [], [
+      reco({ reco_id: 5, signup_id: 2, title: 'Kaiba' }),
+      reco({ reco_id: 6, signup_id: 2, slot: 2, title: 'Dandadan' }),
+    ]) as { embeds: Array<{ title: string; description: string }> };
+    expect(one.embeds[0]!.title).toBe('🎁 Your pick');
+    expect(many.embeds[0]!.title).toBe('🎁 Your pick');
+    expect(one.embeds[0]!.description).toContain('• **Kaiba (2020)**');
+    expect(many.embeds[0]!.description).toContain('• **Kaiba (2020)**\n• **Dandadan (2020)**');
+    expect(one.embeds[1]!.title).toBe('🎬 Your anime');
+    // No buttons on the header — they live on each anime's own panel.
+    expect((one as { components?: unknown }).components).toBeUndefined();
   });
 
-  it('the reveal links the review of each anime, not of the person', () => {
+  it('each anime panel carries its own Review + Rate buttons', () => {
+    const card = animeCard(reco({
+      reco_id: 7, signup_id: 1, title: 'Kaiba', doc_url: 'https://d/7',
+    })) as {
+      embeds: Array<{ title: string; url?: string }>;
+      components: Array<{ components: Array<{ url?: string; custom_id?: string; label: string }> }>;
+    };
+    expect(card.embeds[0]!.title).toBe('Kaiba (2020)');
+    expect(card.embeds[0]!.url).toBeUndefined();          // title stays unclickable
+    const [review, rate] = card.components[0]!.components;
+    expect(review!.url).toBe('https://d/7');
+    expect(rate!.custom_id).toBe('ax:score:7');           // rates THIS anime only
+    expect(rate!.label).toContain('Rate');
+    // A doc that never got made just drops its button.
+    const noDoc = animeCard(reco({ reco_id: 8, signup_id: 1, doc_url: null })) as {
+      components: Array<{ components: Array<{ custom_id?: string }> }>;
+    };
+    expect(noDoc.components[0]!.components).toHaveLength(1);
+    expect(noDoc.components[0]!.components[0]!.custom_id).toBe('ax:score:8');
+  });
+
+  it('the reveal bullets both sides and links each anime own review', () => {
     const theirs = [
       reco({ reco_id: 3, signup_id: 2, title: 'Kaiba', score: 8, doc_url: 'https://d/3' }),
       reco({ reco_id: 4, signup_id: 2, slot: 2, title: 'Dandadan', score: null, doc_url: null }),
     ];
+    const mine = [reco({ reco_id: 9, signup_id: 1, title: 'Frieren' })];
     const card = revealCard(me, signup({ signup_id: 3, user_id: 'u3', display_name: 'C' }),
-      giftee, [], theirs) as { embeds: Array<{ description: string }> };
+      giftee, mine, theirs) as { embeds: Array<{ description: string }> };
     const d = card.embeds[0]!.description;
-    expect(d).toContain('([read review](https://d/3))');
-    expect(d).toContain('\u2b50 8/10');
-    expect(d).toContain('*review doc missing*');   // the pick whose doc never got made
+    expect(d).toContain('Your Secret Santa was **C**');
+    expect(d).toContain('• **Frieren (2020)**');
+    expect(d).toContain('appreciated your picks');
+    expect(d).toContain('• B rated **Kaiba (2020)** ⭐ 8 ([review](https://d/3))');
+    expect(d).toContain("• B didn't rate **Dandadan (2020)**");
   });
 });
 

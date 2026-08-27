@@ -130,7 +130,7 @@ async function doSetup(
   }
   if (!g.participant_msg_id || !(await exists(env, `/channels/${g.participant_channel_id}/messages/${g.participant_msg_id}`))) {
     g.participant_msg_id = await postAndPinPanel(env, g.participant_channel_id!,
-      renderParticipantPanel(cfg, g, event, stats, 0));
+      renderParticipantPanel(cfg, g, event, stats));
     notes.push('Posted + pinned the participant panel.');
   }
 

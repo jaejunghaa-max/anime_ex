@@ -10,7 +10,7 @@ import {
   postMessage,
 } from './discord';
 import { activeRecos, getItems, loadRecos, orderedSignups, recosOf, transition } from './db';
-import { animeLabel, assignmentCard, revealCard, statusPanel } from './cards';
+import { animeCard, assignmentHeader, ratingLine, revealCard, statusPanel } from './cards';
 import {
   createDoc, docUrl, driveExportText, driveFileMeta, driveFlipAnyoneToReader, driveShareAnyone,
   GoogleApiError, GoogleAuthError, writeDocTemplate,
@@ -208,12 +208,20 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
     return;
   }
 
-  // Pass 2 — the assignment card, once every one of that person's docs exists.
+  // Pass 2 — the assignment messages, once every one of that person's docs
+  // exists. A participant now costs 1 + (their anime) posts, so the batch is
+  // measured in MESSAGES, not people: the subrequest budget is what's scarce
+  // (§2.4). At least one person per tick, so a 3-anime thread never starves.
   const recos = await loadRecos(env, event.event_id);
-  const pending = all
-    .map((s, idx) => ({ s, idx }))
-    .filter(({ s }) => !s.assignment_posted)
-    .slice(0, cfg.jobBatch);
+  const waiting = all.map((s, idx) => ({ s, idx })).filter(({ s }) => !s.assignment_posted);
+  const pending: typeof waiting = [];
+  let posts = 0;
+  for (const unit of waiting) {
+    const cost = 1 + activeRecos(recosOf(recos, unit.s.signup_id)).length;
+    if (pending.length > 0 && posts + cost > cfg.jobBatch) break;
+    pending.push(unit);
+    posts += cost;
+  }
 
   if (pending.length === 0) {
     await transition(env, event.event_id, 'LAUNCHING', 'RUNNING');
@@ -229,14 +237,18 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
     const mine = activeRecos(recosOf(recos, s.signup_id));
     const threadId = await ensureThread(env, guild, s);
     // The recommendation-phase status panel is history now; the assignment
-    // card takes over as the thread's live surface.
+    // messages take over as the thread's live surface.
     if (s.mission_msg_id) {
       await deleteMessage(env, threadId, s.mission_msg_id).catch(() => {});
       await env.DB.prepare('UPDATE signups SET mission_msg_id = NULL WHERE signup_id = ?1')
         .bind(s.signup_id).run();
     }
+    // Header first, then one message per anime — a message renders ALL its
+    // embeds before ANY of its buttons, so per-anime buttons need per-anime
+    // messages.
     await postMessage(env, threadId,
-      assignmentCard(event, s, myGiftee, mine, recosOf(recos, myGiftee.signup_id)));
+      assignmentHeader(event, s, myGiftee, mine, recosOf(recos, myGiftee.signup_id)));
+    for (const r of mine) await postMessage(env, threadId, animeCard(r));
     stmts.push(env.DB.prepare(
       'UPDATE signups SET assignment_posted = 1, updated_at = ?1 WHERE signup_id = ?2',
     ).bind(now(), s.signup_id));
@@ -270,20 +282,19 @@ async function postGallery(
     for (const i of members) {
       const s = all[i]!;
       const santa = all[loops.santa[i]!]!;
-      // "J (@J) picked X (⭐8, review), Y for rabbit (@rabbit)"
-      const picks = activeRecos(recosOf(recos, s.signup_id))
-        .map((r) => `**${animeLabel(r)}**${r.score !== null ? ` (⭐ ${r.score})` : ''}` +
-          `${r.doc_url ? ` ([review](${r.doc_url}))` : ''}`)
-        .join(', ') || '—';
+      // "🎁 J (@J) was the Secret Santa of rabbit (@rabbit)" + one bullet per
+      // anime, carrying rabbit's rating and their review link.
       lines.push(
-        `🎁 **${santa.display_name}** (<@${santa.user_id}>) picked ${picks} for ` +
+        `🎁 **${santa.display_name}** (<@${santa.user_id}>) was the Secret Santa of ` +
         `**${s.display_name}** (<@${s.user_id}>)`,
       );
+      const picks = activeRecos(recosOf(recos, s.signup_id));
+      lines.push(...(picks.length ? picks.map((r) => ratingLine(s, r)) : ['• —']));
     }
   }
-  // ≤10 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
+  // ≤20 lines per embed, ≤10 embeds per message (§6.4), and ≤6000 total embed
   // chars per message; mentions inside embeds don't ping.
-  const chunks = chunkLines(lines, 3900, 10);
+  const chunks = chunkLines(lines, 3900, 20);
   let batch: string[] = [];
   let used = 0;
   let first = true;

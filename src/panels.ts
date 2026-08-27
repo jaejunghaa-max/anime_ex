@@ -11,7 +11,6 @@ import { loopsPhrase, ts } from './util';
 export interface PanelStats {
   count: number;
   launched: number;
-  flipped: number;
   revealed: number;
   started: number;
   threadsLeft: number;
@@ -26,6 +25,10 @@ export interface PanelStats {
    *  everyone asked for (the sum of each participant's own maximum). */
   picksAccepted: number;
   picksWanted: number;
+  /** Review docs, counted per ANIME (v6): created, flipped read-only, total. */
+  docsMade: number;
+  docsFlipped: number;
+  docsTotal: number;
   /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
   groupSizes: number[];
   lastSync: number | null;
@@ -35,10 +38,10 @@ export interface PanelStats {
 export async function panelStats(env: Env, event: EventRow | null): Promise<PanelStats> {
   if (!event) {
     return {
-      count: 0, launched: 0, flipped: 0, revealed: 0, started: 0, threadsLeft: 0,
+      count: 0, launched: 0, revealed: 0, started: 0, threadsLeft: 0,
       prepared: 0, recoAccepted: 0, recoPending: 0, recoNothing: 0,
-      picksAccepted: 0, picksWanted: 0, groupSizes: [],
-      lastSync: null, activeJob: null,
+      picksAccepted: 0, picksWanted: 0, docsMade: 0, docsFlipped: 0, docsTotal: 0,
+      groupSizes: [], lastSync: null, activeJob: null,
     };
   }
   const agg = await env.DB.prepare(
@@ -59,15 +62,18 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
        COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'PENDING') THEN 1 ELSE 0 END), 0) AS pending,
        COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED') THEN 1 ELSE 0 END), 0) AS awaiting,
        COALESCE(SUM((SELECT COUNT(*) FROM recos x WHERE x.signup_id = s.signup_id AND x.status = 'FINAL')), 0) AS picks,
-       COALESCE(SUM(s.max_recos), 0) AS wanted,
-       -- Docs live on recos (v6): someone counts as flipped once EVERY one of
-       -- their live picks is read-only.
-       COALESCE(SUM(CASE WHEN NOT EXISTS (SELECT 1 FROM recos x WHERE x.signup_id = s.signup_id AND x.status != 'DECLINED' AND x.doc_readonly = 0) THEN 1 ELSE 0 END), 0) AS flipped
+       COALESCE(SUM(s.max_recos), 0) AS wanted
      FROM signups s WHERE s.event_id = ?1`,
   ).bind(event.event_id).first<{
     accepted: number; pending: number; awaiting: number; picks: number; wanted: number;
-    flipped: number;
   }>();
+  // Review docs are per ANIME since v6 — count them on `recos`, never on people.
+  const docAgg = await env.DB.prepare(
+    `SELECT COUNT(*) AS total,
+            COALESCE(SUM(CASE WHEN doc_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS made,
+            COALESCE(SUM(doc_readonly), 0) AS flipped
+     FROM recos WHERE event_id = ?1 AND status != 'DECLINED'`,
+  ).bind(event.event_id).first<{ total: number; made: number; flipped: number }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -80,7 +86,6 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   return {
     count: agg?.count ?? 0,
     launched: agg?.launched ?? 0,
-    flipped: recoAgg?.flipped ?? 0,
     revealed: agg?.revealed ?? 0,
     started: agg?.started ?? 0,
     threadsLeft: agg?.threadsLeft ?? 0,
@@ -90,6 +95,9 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     recoNothing: recoAgg?.awaiting ?? 0,
     picksAccepted: recoAgg?.picks ?? 0,
     picksWanted: recoAgg?.wanted ?? 0,
+    docsMade: docAgg?.made ?? 0,
+    docsFlipped: docAgg?.flipped ?? 0,
+    docsTotal: docAgg?.total ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
@@ -286,7 +294,8 @@ export function renderManagerPanel(
       };
     }
     case 'LAUNCHING': {
-      const remaining = Math.max(0, stats.count - stats.launched);
+      // Docs are per ANIME, cards per PARTICIPANT — two different totals.
+      const remaining = Math.max(0, stats.docsTotal - stats.docsMade) + Math.max(0, stats.count - stats.launched);
       const eta = Math.max(1, Math.ceil(remaining / cfg.jobBatch));
       return {
         content: '',
@@ -294,7 +303,8 @@ export function renderManagerPanel(
           title: `🚀 Launching — ${e.topic}`,
           description:
             sheetTop(e) +
-            `**${stats.launched} / ${stats.count}** review docs + assignment cards delivered · ~${eta} min remaining (automatic)` +
+            `**${stats.docsMade} / ${stats.docsTotal}** review docs (one per anime) · ` +
+            `**${stats.launched} / ${stats.count}** assignment cards · ~${eta} min remaining (automatic)` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
@@ -315,21 +325,21 @@ export function renderManagerPanel(
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
           btn('ax:remind', '📣 Remind Now'),
+          autostopBtn(e),
           btn('ax:close', '🏁 Close Reviews', Style.PRIMARY),
           abortBtn(),
         )],
       };
     }
     case 'CLOSING': {
-      const done = Math.min(stats.flipped, stats.revealed);
       return {
         content: '',
         embeds: [embed({
           title: `🏁 Closing — ${e.topic}`,
           description:
             sheetTop(e) +
-            `Flipping docs read-only and posting reveals… **${done} / ${stats.count}**\n` +
-            `(read-only: ${stats.flipped}/${stats.count} · reveals: ${stats.revealed}/${stats.count})` +
+            `Flipping docs read-only and posting reveals…\n` +
+            `(read-only: ${stats.docsFlipped}/${stats.docsTotal} docs · reveals: ${stats.revealed}/${stats.count})` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
@@ -369,7 +379,7 @@ const howItWorks = (maxDeclines: number): string =>
   'Who picked yours stays secret until the reveal. 🎁';
 
 export function renderParticipantPanel(
-  cfg: Cfg, guild: GuildRow, event: EventRow | null, stats: PanelStats, itemCount: number,
+  cfg: Cfg, guild: GuildRow, event: EventRow | null, stats: PanelStats,
 ): Record<string, unknown> {
   const title = '🎁 Anime Exchange';
   if (!event || event.state === 'DRAFTING') {
@@ -393,8 +403,7 @@ export function renderParticipantPanel(
           title: `${title} — ${e.topic}`,
           description:
             themeLine(e) +
-            `${howItWorks(e.max_declines)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})\n` +
-            `**Sign-up form:** your ${e.link_label || 'MAL/AniList link'} + how many anime you want + ${itemCount} question(s)${banner}`,
+            `${howItWorks(e.max_declines)}\n\n**Sign-up deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})${banner}`,
         })],
         components: [row(
           btn('ax:signup', '📝 Sign Up/Edit', Style.PRIMARY),
@@ -526,7 +535,7 @@ export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promis
   if (guild.participant_channel_id && guild.participant_msg_id) {
     jobs.push(
       editMessage(env, guild.participant_channel_id, guild.participant_msg_id,
-        renderParticipantPanel(cfg, guild, event, stats, items.length))
+        renderParticipantPanel(cfg, guild, event, stats))
         .catch((e) => console.error('participant panel repaint failed', e)),
     );
   }
@@ -563,7 +572,7 @@ export async function repostPanels(env: Env, cfg: Cfg, guildId: string): Promise
     },
     {
       channel: guild.participant_channel_id, msg: guild.participant_msg_id,
-      column: 'participant_msg_id', payload: renderParticipantPanel(cfg, guild, event, stats, items.length),
+      column: 'participant_msg_id', payload: renderParticipantPanel(cfg, guild, event, stats),
     },
   ];
   for (const t of targets) {

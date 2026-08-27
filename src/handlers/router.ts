@@ -82,7 +82,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
       case 'launch': return mgr.launchSubmit(c);
       case 'signup_a': return su.signupModalA(c);
       case 'signup_b': return su.signupModalB(c);
-      case 'score': return su.scoreSubmit(c);
+      case 'score': return su.rateSubmit(c);
       case 'reco_kw': return reco.recoModalKw(c);
       default: return stale(c, 'This form is from an older version.');
     }
@@ -140,7 +140,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'signup_restart': return su.signupRestart(c);
     case 'signup_force': return su.signupForce(c);
     case 'signup_confirm': return su.signupConfirm(c);
-    case 'score': return su.scoreModal(c);
+    case 'score': return su.rateModal(c, arg);
     case 'withdraw': return arg === 'go' ? su.withdrawGo(c) : su.withdraw(c);
     // participant recommending phase (v3)
     case 'reco': return reco.recoOpen(c, arg);

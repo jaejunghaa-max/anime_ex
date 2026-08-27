@@ -101,6 +101,24 @@ async function deadlineChecks(env: Env, cfg: Cfg): Promise<void> {
       console.error(`auto-stop failed for event ${e.event_id}`, err);
     }
   }
+
+  // Review deadline (v7): with auto-stop ON, RUNNING closes itself — same as
+  // pressing 🏁 Close Reviews, gallery included. The close job flips every doc
+  // read-only before it posts a single reveal, so nothing leaks early.
+  const toClose = await env.DB.prepare(
+    "SELECT * FROM events WHERE state = 'RUNNING' AND auto_stop = 1 AND review_deadline IS NOT NULL AND review_deadline <= ?1",
+  ).bind(t).all<EventRow>();
+  for (const e of toClose.results) {
+    try {
+      if (!(await transition(env, e.event_id, 'RUNNING', 'CLOSING'))) continue;
+      await env.DB.prepare(
+        "INSERT INTO jobs (event_id, kind, payload_json, created_at) VALUES (?1, 'close', ?2, ?3)",
+      ).bind(e.event_id, JSON.stringify({ gallery: true }), t).run().catch(() => {});
+      await repaintPanels(env, cfg, e.guild_id);
+    } catch (err) {
+      console.error(`auto-close failed for event ${e.event_id}`, err);
+    }
+  }
 }
 
 // ----------------------------------------------------- periodic sync enqueue

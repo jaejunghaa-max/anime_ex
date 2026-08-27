@@ -43,14 +43,14 @@ export interface Layout {
   maxRecos: number;
   groupCol: number;
   santaCol: number;
-  /** First column of slot 1's triple (Recommendation / Rec. Status / Score). */
+  /** First column of slot 1's block (Recommendation / Rec. Status / Rating). */
   recoCol: number;
   linkCol: number;
   lengthCol: number;
   lastCol: number;
 }
 
-/** Columns per slot: Recommendation, Rec. Status, Score, Review Link, Review Length. */
+/** Columns per slot: Recommendation, Rec. Status, Rating, Review Link, Review Length. */
 const PER_RECO = 5;
 
 /** Hard cap on how many anime one participant may ask for (v6). */
@@ -88,7 +88,7 @@ export function headerRow(items: FormItem[], maxRecos = 1): string[] {
     // A single-pick event keeps the unnumbered headers.
     const sfx = n > 1 ? ` ${j}` : '';
     recoHeaders.push(
-      `Recommendation${sfx}`, `Rec. Status${sfx}`, `Score${sfx}`,
+      `Recommendation${sfx}`, `Rec. Status${sfx}`, `Rating${sfx}`,
       `Review Link${sfx}`, `Review Length${sfx}`,
     );
   }
@@ -257,7 +257,7 @@ export async function readSheetRows(
 
 /**
  * Rewrite whole recommendation blocks, one A1 range per participant row —
- * every send / accept / decline / score / doc-link / sync shifts cells inside
+ * every send / accept / decline / rating / doc-link / sync shifts cells inside
  * the block, so it is always written as a unit. Best-effort; the
  * job-completion rewrite heals anything that failed.
  */

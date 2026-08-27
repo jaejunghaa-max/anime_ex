@@ -7,7 +7,7 @@ person's list and recommend anime just for them — **you decide how many you
 want to receive** (up to 3, a maximum, not a quota) — while your own Secret
 Santa picks for you. Don't like the pick? Send it back with **Sorry😞**
 (a limited number of times!). Once every pick is locked in, everyone watches
-their full season, writes a review in a Google Doc, and scores it out of 10.
+their full season, writes a review in a Google Doc, and rates it out of 10.
 Who picked what for whom stays secret until the reveal at the end.
 
 Matches form **loops**: by default one big circle over everyone, or several
@@ -125,17 +125,19 @@ automatically. At launch, everything is final.
 ### The event itself
 
 Once the picking is done, the manager launches. Your thread gets the
-**assignment card**:
+**assignment** — a header message and then one panel per anime:
 
-- **Your pick(s)** — on top: who will be reviewing what you chose, with their
-  MAL/AniList link.
-- **Your anime** — below it: everything picked for you. Watch the full season
-  of each. *Who picked them stays secret until the reveal.*
-- **📝 Open your review doc** — **one Google Doc per anime**, so several picks
-  mean several buttons (`📝 Review: {title}`). Write each review any time
-  before the deadline; the links live on this card permanently.
-- **⭐ Score it /10** — rate each anime (1–10) in one form; leave any at
-  "— no score —" and come back later. Changeable until reviews close.
+- **🎁 Your pick** — on top: what you chose, bulleted, plus who will be
+  reviewing it and their MAL/AniList link.
+- **🎬 Your anime** — the intro and the **⏰ review deadline**. Watch the full
+  season of each. *Who picked them stays secret until the reveal.*
+- **One panel per anime** below that — cover, type, episodes, MAL link — each
+  with its own two buttons:
+- **📝 Review: {anime}** — each anime gets **its own Google Doc**, on its own
+  panel next to its Rate button. Write each review any time before the
+  deadline; the links stay in your thread permanently.
+- **⭐ Rate: {anime}** — rate that one anime (1–10); pick "— no rating —" to
+  clear it and come back later. Changeable until reviews close.
 
 Reminders arrive in this thread as the deadline approaches (and optionally by
 DM, if the manager enabled mirroring). You count as "started" once your doc
@@ -146,20 +148,21 @@ has about 20 characters beyond the pre-filled template.
 When the manager closes reviews, every doc flips to **view-only first**, then
 your thread gets the reveal card:
 
-> Your Secret Santa was **J** (@J) — they picked **Sousou no Frieren**,
-> **Bocchi the Rock!** for you.
+> 🎭 **The reveal**
+> Your Secret Santa was **J** (@J). They picked the anime for you.
+> • **Kaijuu 8-gou (2024)**
+> • **Naruto (2002)**
 >
-> **rabbit** (@rabbit) rated your picks
-> • **Kaijuu 8-gou** — ⭐ 8/10 ([read review](…))
-> • **Dandadan** — ⭐ 7/10 ([read review](…))
->
-> (…or "didn't score your picks" if they never rated any.)
+> **rabbit** (@rabbit) appreciated your picks
+> • rabbit rated **Sousou no Frieren (2023)** ⭐ 9 ([review](…))
+> • rabbit didn't rate **Bocchi the Rock! (2022)** ([review](…))
 
-If the manager chose a public gallery, `#anime-exchange` also gets the whole
-loop, one line per participant:
+The gallery goes to `#anime-exchange`, one header per pair and a bullet per
+anime:
 
-> 🎁 **J** (@J) picked **Kaijuu 8-gou** (⭐ 8), **Dandadan** (⭐ 7) for
-> **rabbit** (@rabbit) ([read review](…))
+> 🎁 **J** (@J) was the Secret Santa of **rabbit** (@rabbit)
+> • rabbit rated **Kaijuu 8-gou (2024)** ⭐ 9 ([review](…))
+> • rabbit didn't rate **Naruto (2002)** ([review](…))
 
 ---
 
@@ -195,15 +198,16 @@ loop, one line per participant:
   description and each visible-to-recommender or hidden.
 - **📨 Open Sign-Ups** — asks for the **sign-up deadline and timezone**, then
   confirms. Creates the spreadsheet, opens the participant panel, and
-  **pings @everyone** in `#anime-exchange`.
+  flips the participant panel to "sign-ups open". **The bot never pings
+  @everyone** — announce it yourself, however your server likes it.
 - **🗑 Discard** deletes the draft.
 
 **SIGNUP_OPEN**
 - The panel shows the live count and links the sheet in its body (as every
   later state does — `Sheet: https://…`); **🔄 Refresh** updates the count
   instantly instead of waiting out the 1-minute throttle.
-- **⏰ Auto-stop** — a toggle here (and again during Recommending): ON closes
-  sign-ups automatically at the deadline.
+- **⏰ Auto-stop** — a toggle here (and again during Recommending and Running):
+  ON closes sign-ups automatically at the deadline.
 - If the deadline passes with auto-stop off, the participant panel shows
   "⏰ Deadline passed — still accepting until the manager closes sign-ups."
 - **⏸ Stop Sign-Ups** moves to Matching (reversible via Reopen).
@@ -261,16 +265,20 @@ accepted out of everything people asked for.
   with **‼️The pending picks will be locked**.
 
 **LAUNCHING** — the bot creates **one review doc per accepted anime** and then
-posts the assignment card in each existing thread, about 5 per minute; the
-panel counts up and flips to RUNNING by itself.
+posts each participant's assignment (a header message plus one panel per
+anime) into their existing thread. The panel counts **docs** and **cards**
+separately — they are different totals — and flips to RUNNING by itself.
 Redeploys or crashes lose nothing — it resumes where it left off.
 
 **RUNNING**
-- The panel body links the sheet — the detail view (per-anime Review Link and
-  Review Length, Score, `⚠ missing` flags).
+- The panel body links the sheet — the detail view (per-anime Rating, Review
+  Link and Review Length, `⚠ missing` flags).
 - **🔄 Refresh** — queues a status refresh; the panel and sheet update within
   a minute or two. Status also refreshes on its own every 30 minutes.
 - **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
+- **⏰ Auto-stop** — ON closes reviews by itself at the review deadline: docs
+  flip read-only, reveals and the gallery go out, exactly as if you had pressed
+  🏁 Close Reviews. OFF leaves it to you.
 - **🏁 Close Reviews** — one confirm; closing always posts the public gallery
   in `#anime-exchange` along with the private reveal cards.
 
@@ -304,11 +312,11 @@ automatically if it drifts.
 | Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
 | Recommendation *k* | bot | their *k*-th live pick (declined ones don't take a column) |
 | Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch` (blank if that slot holds no pick) |
-| Score *k* | bot | the participant's ⭐/10 for that anime |
+| Rating *k* | bot | the participant's ⭐/10 for that anime |
 | Review Link *k* | bot | the Google Doc for that anime |
 | Review Length *k* | bot | characters written in it beyond the template |
 
-The Recommendation / Rec. Status / Score / Review Link / Review Length block
+The Recommendation / Rec. Status / Rating / Review Link / Review Length block
 repeats as many times as the greediest participant asked for, numbered
 (`Recommendation 1`, …, `Review Length 1`, `Recommendation 2`, …). If everyone
 wants a single anime, the headers stay unnumbered. Live picks always sit left-packed,
@@ -330,7 +338,7 @@ and the whole sheet is a dashboard.
 | Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
 | Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
 | Review docs + assignment cards at Launch | ~5 docs per minute, then ~5 cards per minute |
-| Review Length / started-writing / Score in sheet & panel | every 30 min, plus on every **🔄 Refresh** click |
+| Review Length / started-writing / Rating in sheet & panel | every 30 min, plus on every **🔄 Refresh** click |
 | Reminders | up to 30 messages per minute |
 | Close (flips + reveals) | ~5 participants per minute, docs flip first |
 | Auto-stop / deadline banner | checked every 15 min |

@@ -6,7 +6,7 @@
 import type { EventRow, FormItem } from '../types';
 import { modalFields } from '../types';
 import {
-  btn, deleteMessage, editOriginal, embed, linkBtn, modalSelect, modalText, postMessage, respond,
+  btn, deleteMessage, editOriginal, embed, linkBtn, modalSelect, modalText, respond,
   row, stringSelect, Style,
 } from '../discord';
 import {
@@ -167,19 +167,22 @@ export async function basicsSubmit(c: HCtx): Promise<Response> {
 }
 
 /**
- * [⏰ Auto-stop] toggle — one flag, two phases: sign-ups close themselves at
- * the sign-up deadline, and the recommendation phase locks every ⏳ pending
- * pick at the recommendation deadline. Launching always stays manual.
+ * [⏰ Auto-stop] toggle — one flag, three phases: sign-ups close themselves at
+ * the sign-up deadline, the recommendation phase locks every ⏳ pending pick at
+ * the recommendation deadline, and RUNNING closes reviews at the review
+ * deadline. Launching always stays manual (it's the irreversible one).
  */
 export async function autostopToggle(c: HCtx): Promise<Response> {
-  const e = needState(c, 'SIGNUP_OPEN', 'RECOMMENDING');
+  const e = needState(c, 'SIGNUP_OPEN', 'RECOMMENDING', 'RUNNING');
   if (!e) return stale(c);
   const nv = e.auto_stop ? 0 : 1;
   await c.env.DB.prepare('UPDATE events SET auto_stop = ?1, updated_at = ?2 WHERE event_id = ?3')
     .bind(nv, now(), e.event_id).run();
   const what = e.state === 'SIGNUP_OPEN'
     ? { on: 'sign-ups close automatically at the deadline', off: 'you close sign-ups manually' }
-    : { on: 'pending picks lock in automatically at the recommendation deadline', off: 'pending picks wait for you to Launch' };
+    : e.state === 'RECOMMENDING'
+      ? { on: 'pending picks lock in automatically at the recommendation deadline', off: 'pending picks wait for you to Launch' }
+      : { on: 'reviews close automatically at the review deadline — docs flip read-only, reveals and the gallery post', off: 'you press 🏁 Close Reviews yourself' };
   bg(c, async () => {
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
@@ -444,7 +447,7 @@ export async function openSignupsSubmit(c: HCtx): Promise<Response> {
     content:
       `📨 **Open sign-ups for ${e.topic}?**\n` +
       `• Deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
-      `• Everyone in the exchange channel gets an **@everyone** ping.\n` +
+      `• The participant panel opens — announce it yourself however you like.\n` +
       `• The spreadsheet is created in **${c.guild.google_email}**'s Drive.`,
     components: [row(btn('ax:open:go', 'Confirm — open sign-ups', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
@@ -481,27 +484,8 @@ export async function openSignupsGo(c: HCtx): Promise<Response> {
       return;
     }
     await repaint(c);
-    // Announce in the participant channel with a real @everyone ping (the
-    // invite grants Mention Everyone; without it the text still shows, it
-    // just doesn't notify).
-    if (c.guild.participant_channel_id) {
-      // Remembered so Abort can take the ping down with the event.
-      const announce = await postMessage(c.env, c.guild.participant_channel_id, {
-        content:
-          `@everyone 📨 **${e.topic}** — sign-ups are open!` +
-          `${e.theme ? ` 🎨 Theme: **${e.theme}**.` : ''} ` +
-          `Press **📝 Sign Up/Edit** on the pinned panel. ` +
-          `Deadline: ${ts(fresh.signup_deadline!)} (${ts(fresh.signup_deadline!, 'R')})`,
-        allowed_mentions: { parse: ['everyone'] },
-      }).catch((err) => {
-        console.error('sign-up-open announcement failed', err);
-        return null;
-      });
-      if (announce) {
-        await c.env.DB.prepare('UPDATE events SET announce_msg_id = ?1 WHERE event_id = ?2')
-          .bind(announce.id, e.event_id).run();
-      }
-    }
+    // No @everyone announcement — the panel flipping to "sign-ups open" IS the
+    // notice, and managers ping their server themselves.
     await editOriginal(c.env, c.i.token, {
       content: `📨 **Sign-ups are open!** Sheet: ${sheetUrl(sheetId!)}`, components: [],
     });
@@ -968,8 +952,8 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
         : pending > 0
           ? `**‼️The pending picks will be locked**\n\n`
           : '') +
-      `Launching creates one review doc per accepted anime and posts the assignment ` +
-      `card in their existing thread (batched — ~${Math.max(1, Math.ceil(n / c.cfg.jobBatch))} min). Forward-only.`,
+      `Launching creates one review doc per accepted anime (**${agg.picks}** of them) and posts the ` +
+      `assignment into each existing thread (batched — ~${Math.max(1, Math.ceil((agg.picks + n) / c.cfg.jobBatch))} min). Forward-only.`,
     components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
   });
 }
@@ -1019,7 +1003,7 @@ export async function launchGo(c: HCtx): Promise<Response> {
     await enqueueJob(c, e.event_id, 'launch');
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: `🚀 **Launching** — ${participants.length} review docs + assignment cards will be delivered over the next ~${Math.max(1, Math.ceil(participants.length / c.cfg.jobBatch))} minute(s). The panel counts up automatically.`,
+      content: `🚀 **Launching** — review docs (one per anime) and ${participants.length} assignment cards will be delivered over the next few minutes. The panel counts up automatically.`,
       components: [],
     });
   });

@@ -1,6 +1,6 @@
 {
   "name": "anime-exchange-bot",
-  "version": "6.0.0",
+  "version": "7.0.0",
   "private": true,
   "type": "module",
   "description": "Discord Anime Exchange bot on Cloudflare Workers (HTTP interactions + D1 + Google Drive/Sheets/Docs)",

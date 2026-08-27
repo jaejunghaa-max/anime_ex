@@ -83,7 +83,7 @@ SIGNUP_OPEN ─→ MATCHING ─→ PREPARING ─→ RECOMMENDING ─→ LAUNCHIN
 ```
 src/
   index.ts      entry: /interactions + OAuth routes + cron
-  cron.ts       minute dispatcher: reminders → jobs; banner/auto-stop; periodic sync
+  cron.ts       minute dispatcher: reminders → jobs; banner/auto-stop/auto-close; periodic sync
   jobs.ts       batched prepare / launch / close / sync / finish engine
   cards.ts      thread-card builders (Santa mission, pick, assignment, reveal)
   handlers/     router, /setup, manager panel, signup wizard, recommending phase
@@ -156,10 +156,9 @@ npm run deploy
 1. `DISCORD_TOKEN=... DISCORD_APP_ID=... npm run register` — registers
    `/setup init` + `/setup repair` and prints the **invite URL** (Manage Roles,
    Manage Channels, Manage Threads, Create Private Threads, Send Messages
-   (+ in Threads), Embed Links, Read Message History, Manage Messages,
-   Mention Everyone — the Open-Sign-Ups @everyone ping). On an install that
-   predates the Mention Everyone permission, re-invite with the new URL (or
-   grant the bot's role "Mention @everyone") so the ping actually notifies.
+   (+ in Threads), Embed Links, Read Message History, Manage Messages).
+   The bot never pings @everyone — announcing an open sign-up is the
+   manager's own call.
 2. In the app's **General Information**, set **Interactions Endpoint URL** to
    `https://<worker>/interactions` (Discord sends a PING — the deployed Worker
    must be live first).
@@ -177,11 +176,12 @@ Everything happens on the two pinned panels:
    (**Session** name, optional **Theme** — shown to participants everywhere —
    and the **Sorry😞 budget (0–9)**; how many anime each person wants is
    entirely their own call at sign-up, the sign-up deadline and timezone come
-   with 📨 Open Sign-Ups, and auto-stop is a ⏰ toggle on the sign-up and
-   recommending panels) → add up to 8 custom form items (fill-in or MCQ, optional
+   with 📨 Open Sign-Ups, and auto-stop is a ⏰ toggle on the sign-up,
+   recommending and running panels) → add up to 8 custom form items (fill-in or MCQ, optional
    description shown under the question, each 👁 visible-to-recommender or 🔒
    hidden) → **Open Sign-Ups** (creates the spreadsheet in the manager's
-   Drive and pings **@everyone** in the participant channel).
+   Drive and flips the participant panel; announce it yourself however you
+   like — the bot posts no @everyone ping).
 2. Participants press **Sign Up/Edit** (one button for both): **how many anime
    you want (1–3)** first, then the built-in **MAL/AniList link** field and
    items 1–3, an optional second modal for items 4–8, then a summary card to
@@ -222,22 +222,25 @@ Everything happens on the two pinned panels:
    after a bold **‼️The pending picks will be locked** warning.
 5. Launch runs as a batched job: **one review doc per accepted anime**
    (`Review of {Anime} by {name}`; header "given to `Display(@username)`",
-   anyone-with-link **editor**), then an assignment card in their existing
-   thread — their own pick recap (giftee + list link) on top, their anime
-   below, one doc link button per anime + **⭐ Score it /10** last. The panel
-   counts up and flips to RUNNING by itself.
+   anyone-with-link **editor**), then the assignment as a short sequence of
+   thread messages — **🎁 Your pick** (bulleted) + **🎬 Your anime** + the
+   deadline, then one panel per anime carrying its own
+   **[📝 Review: …] [⭐ Rate: …]** pair (a Discord message renders every embed
+   before any button, so per-anime buttons need per-anime messages). The batch
+   is measured in messages; the panel counts docs and cards separately and
+   flips to RUNNING by itself.
 6. During RUNNING: wrote-detection every 30 minutes and on every **🔄 Refresh**
    click (chars written beyond each doc's template; the sheet — linked from the
-   panel at all times — carries a **Review Link** + **Review Length** pair per
-   pick), progress panel,
-   scheduled reminders (thread ping, optional DM mirror), **Remind Now** for
-   laggards, scoring out of 10 until Close.
+   panel at all times — carries a **Rating** + **Review Link** + **Review
+   Length** trio per pick), progress panel, scheduled reminders (thread ping,
+   optional DM mirror), **Remind Now** for laggards, **⏰ Auto-stop** (ON closes
+   reviews by itself at the review deadline), rating out of 10 until Close.
 7. **Close Reviews**: one confirm — final status sync, all docs flip to
    anyone-with-link **viewer** *before* any reveal link is posted, then reveal
-   cards — "your Secret Santa was X, they picked Y for you"; unscored reviews
-   read "didn't score your pick", and every anime carries its own
-   **(read review)** link — plus the public gallery (always posted), one line
-   per participant, per loop.
+   cards — "your Secret Santa was X. They picked the anime for you." with a
+   bullet per anime, then what the giftee made of your picks, each with its own
+   **(review)** link — plus the public gallery (always posted): one
+   "🎁 X was the Secret Santa of Y" header per pair and a bullet per anime.
 8. **Finish**: deletes threads and the bot's event data, then re-posts fresh
    IDLE panels at the bottom of both channels (Abort does the same). **The
    sheet and docs stay in the manager's Drive** — nothing to export.
