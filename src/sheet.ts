@@ -10,7 +10,7 @@ import {
   SHEET_TAB, addHeaderNotes, valuesBatchUpdate, valuesClear, valuesGet, valuesUpdate,
 } from './google';
 import {
-  activeRecos, answersOf, declinedRecos, getItems, loadRecos, orderedSignups, recosOf, type RecoMap,
+  activeRecos, answersOf, getItems, loadRecos, orderedSignups, recosOf, type RecoMap,
 } from './db';
 import { buildLoops, type LoopMap } from './util';
 
@@ -105,10 +105,11 @@ export function recoCell(r: Pick<RecoRow, 'title' | 'year'> | undefined): string
   return r.year ? `${r.title} (${r.year})` : r.title;
 }
 
-/** Rec. Status cell — mirrors the approve/decline state machine. */
+/** Rec. Status cell — mirrors the approve/decline state machine. An empty slot
+ *  stays empty: the decline count belongs to the person, not to a slot that
+ *  holds no pick (it lives on 📊 View Status instead). */
 export function recoStatusCell(
   r: Pick<RecoRow, 'status' | 'final_via'> | undefined,
-  declinesUsed = 0,
 ): string {
   switch (r?.status) {
     case 'PENDING':
@@ -118,9 +119,7 @@ export function recoStatusCell(
     case 'DECLINED':
       return '😞 declined';
     default:
-      // Empty slot: note the person's declines so the column still tells the
-      // story of a Santa who keeps missing.
-      return declinesUsed > 0 ? `😞 declined ×${declinesUsed}` : '';
+      return '';
   }
 }
 
@@ -139,16 +138,15 @@ export function scoreCell(r: Pick<RecoRow, 'score'> | undefined): string | numbe
 
 /** The per-slot block of one participant's row: 5 cells per slot. */
 export function recoRowCells(s: SignupRow, recos: RecoRow[], slots: number): unknown[] {
-  // Live picks fill the columns left to right — declined ones leave no gap;
-  // their count rides in the first empty status cell instead.
+  // Live picks fill the columns left to right — declined ones leave no gap and
+  // no trace; unused slots stay blank.
   const live = activeRecos(recos).sort((a, b) => a.slot - b.slot);
-  const declines = declinedRecos(recos).length;
   const cells: unknown[] = [];
   for (let j = 0; j < Math.max(1, slots); j++) {
     const r = live[j];
     cells.push(
       recoCell(r),
-      recoStatusCell(r, r ? 0 : (j === live.length ? declines : 0)),
+      recoStatusCell(r),
       scoreCell(r),
       r?.doc_url ?? '',
       lengthCell(r),

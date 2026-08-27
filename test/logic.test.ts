@@ -231,10 +231,11 @@ describe('sheet layout (§8.3)', () => {
     expect(recoCell({ title: 'Frieren', year: null })).toBe('Frieren');
     expect(recoCell({ title: null, year: null })).toBe('');
     expect(recoCell(undefined)).toBe('');
-    expect(recoStatusCell(undefined)).toBe('');                    // empty slot
-    expect(recoStatusCell(undefined, 2)).toBe('😞 declined ×2');   // …after two take-backs
+    // An empty slot stays empty — declines are the person's story, not a
+    // slot's, and they live on 📊 View Status.
+    expect(recoStatusCell(undefined)).toBe('');
     expect(recoStatusCell({ status: 'PENDING', final_via: null })).toBe('⏳ awaiting reply');
-    expect(recoStatusCell({ status: 'FINAL', final_via: 'APPROVED' }, 1)).toBe('✅ accepted');
+    expect(recoStatusCell({ status: 'FINAL', final_via: 'APPROVED' })).toBe('✅ accepted');
     expect(recoStatusCell({ status: 'FINAL', final_via: 'FORCED' })).toBe('⏩ locked at launch');
     expect(recoStatusCell({ status: 'DECLINED', final_via: null })).toBe('😞 declined');
   });

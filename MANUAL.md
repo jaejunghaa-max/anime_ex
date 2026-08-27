@@ -303,7 +303,7 @@ automatically if it drifts.
 | **Group** | **you** (during Matching only) | loop membership — positive integer, blank = 1 |
 | Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
 | Recommendation *k* | bot | their *k*-th live pick (declined ones don't take a column) |
-| Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch`; the first empty column shows `😞 declined ×k` |
+| Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch` (blank if that slot holds no pick) |
 | Score *k* | bot | the participant's ⭐/10 for that anime |
 | Review Link *k* | bot | the Google Doc for that anime |
 | Review Length *k* | bot | characters written in it beyond the template |
