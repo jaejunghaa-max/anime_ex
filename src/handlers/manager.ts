@@ -448,8 +448,9 @@ export async function openSignupsSubmit(c: HCtx): Promise<Response> {
       `📨 **Open sign-ups for ${e.topic}?**\n` +
       `• Deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• The participant panel opens — announce it yourself however you like.\n` +
-      `• The spreadsheet is created in **${c.guild.google_email}**'s Drive.`,
-    components: [row(btn('ax:open:go', 'Confirm — open sign-ups', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
+      `• The spreadsheet is created in **${c.guild.google_email}**'s Drive.\n` +
+      `*The deadline and timezone above are already saved — **Not yet** just closes this, it does not undo them.*`,
+    components: [row(btn('ax:open:go', 'Confirm — open sign-ups', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
 
@@ -673,7 +674,7 @@ export async function groupingSubmit(c: HCtx): Promise<Response> {
   return respond.deferEphemeral();
 }
 
-function validationResponse(c: HCtx, report: string, missing: Array<{ userId: string; name: string }>): Record<string, unknown> {
+function validationResponse(report: string, missing: Array<{ userId: string; name: string }>): Record<string, unknown> {
   const first = missing[0];
   return {
     content: report,
@@ -693,7 +694,7 @@ export async function validate(c: HCtx): Promise<Response> {
     const items = await getItems(c.env, e.event_id);
     const result = await runValidate(c.env, c.guild, e, items);
     await repaint(c);
-    await editOriginal(c.env, c.i.token, validationResponse(c, validateReport(result), result.missing));
+    await editOriginal(c.env, c.i.token, validationResponse(validateReport(result), result.missing));
   });
   return respond.deferEphemeral();
 }
@@ -704,12 +705,21 @@ export async function removalConfirm(c: HCtx, userId: string): Promise<Response>
   bg(c, async () => {
     await c.env.DB.prepare('DELETE FROM signups WHERE event_id = ?1 AND user_id = ?2')
       .bind(e.event_id, userId).run();
+    // Close the gap the delete leaves in row_order. Validate renumbers too, but
+    // only when it passes — and writeRecoRows addresses sheet rows as
+    // row_order + 2, so the invariant should not depend on that.
+    const remaining = await orderedSignups(c.env, e.event_id);
+    if (remaining.length) {
+      await dbBatchChunked(c.env, remaining.map((s, idx) =>
+        c.env.DB.prepare('UPDATE signups SET row_order = ?1, updated_at = ?2 WHERE signup_id = ?3')
+          .bind(idx, now(), s.signup_id)));
+    }
     const items = await getItems(c.env, e.event_id);
     const result = await runValidate(c.env, c.guild, e, items);
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
       content: `🗑 Removed <@${userId}> from the event.\n\n${validateReport(result)}`,
-      components: validationResponse(c, '', result.missing).components,
+      components: validationResponse('', result.missing).components,
     });
   });
   return respond.deferUpdate();
@@ -726,7 +736,7 @@ export async function removalRestore(c: HCtx, userId: string): Promise<Response>
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
       content: `↩ Restored <@${userId}>'s sheet row.\n\n${validateReport(result)}`,
-      components: validationResponse(c, '', result.missing).components,
+      components: validationResponse('', result.missing).components,
     });
   });
   return respond.deferUpdate();
@@ -774,8 +784,9 @@ export async function recoStartSubmit(c: HCtx): Promise<Response> {
       `• Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
       `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
       `Everyone recommends up to the number their giftee asked for (1–3) and can send picks back **${e.max_declines}** time(s).\n` +
-      `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
-    components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
+      `You can still undo with **↩ Back to Matching** — but that wipes all picks.\n` +
+      `*The deadline and timezone above are already saved — **Not yet** just closes this, it does not undo them.*`,
+    components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
 
@@ -789,7 +800,7 @@ export async function recoStartGo(c: HCtx): Promise<Response> {
     const items = await getItems(c.env, e.event_id);
     const result = await runValidate(c.env, c.guild, e, items);
     if (!result.ok) {
-      await editOriginal(c.env, c.i.token, validationResponse(c, validateReport(result), result.missing));
+      await editOriginal(c.env, c.i.token, validationResponse(validateReport(result), result.missing));
       return;
     }
     if (!(await transition(c.env, e.event_id, 'MATCHING', 'PREPARING'))) {
@@ -870,8 +881,8 @@ export async function backMatchingGo(c: HCtx): Promise<Response> {
       // Slots are recreated (empty) by the next prepare job.
       c.env.DB.prepare('DELETE FROM recos WHERE event_id = ?1').bind(e.event_id),
       c.env.DB.prepare(
-        `UPDATE signups SET declines_used = 0, reco_declined_json = '[]',
-           reco_card_posted = 0, mission_msg_id = NULL, updated_at = ?1
+        `UPDATE signups SET declines_used = 0, reco_card_posted = 0,
+           mission_msg_id = NULL, updated_at = ?1
          WHERE event_id = ?2`,
       ).bind(now(), e.event_id),
       // Deadline stays (prefills the next Start Recommending); its banner resets.
@@ -893,9 +904,20 @@ export async function backMatchingGo(c: HCtx): Promise<Response> {
 // ---------------------------------------------------------------- Launch
 // Now gated on the recommendation phase: every pick must be FINAL.
 
-export function launchModal(c: HCtx): Response {
+export async function launchModal(c: HCtx): Promise<Response> {
   const e = needState(c, 'RECOMMENDING');
   if (!e) return stale(c);
+  // The panel says launch unlocks once everyone has a pick, and launchGo
+  // enforces it — so refuse here rather than after the manager has filled in
+  // a review deadline and pressed confirm.
+  const counts = await peopleCounts(c, e.event_id);
+  if (counts.nothing > 0) {
+    return respond.ephemeral({
+      content:
+        `⚠ **${counts.nothing} participant(s) have no anime yet** — everyone needs at least one pick ` +
+        `before launch. Use **📣 Remind Now** to nudge the Santas who still owe one.`,
+    });
+  }
   return respond.modal('axm:launch', 'Launch the exchange', [
     modalText('deadline', 'Review deadline (YYYY-MM-DD HH:mm)', {
       value: e.review_deadline && e.tz ? epochToZoned(e.review_deadline, e.tz) : '',
@@ -953,8 +975,10 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
           ? `**‼️The pending picks will be locked**\n\n`
           : '') +
       `Launching creates one review doc per accepted anime (**${agg.picks}** of them) and posts the ` +
-      `assignment into each existing thread (batched — ~${Math.max(1, Math.ceil((agg.picks + n) / c.cfg.jobBatch))} min). Forward-only.`,
-    components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Cancel'))],
+      `assignment into each existing thread (batched — ~${Math.ceil(agg.picks / c.cfg.jobBatch) + Math.ceil((n + agg.picks) / c.cfg.jobBatch)} min, ` +
+      `longer if other events are running). Forward-only.\n` +
+      `*The deadline, reminders and DM setting above are already saved — **Not yet** just closes this, it does not undo them.*`,
+    components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
 
@@ -1078,16 +1102,20 @@ export async function remindNow(c: HCtx): Promise<Response> {
 export async function remindNowGo(c: HCtx): Promise<Response> {
   const e = needState(c, 'RUNNING', 'RECOMMENDING');
   if (!e) return stale(c);
-  const targets = await remindTargets(c, e);
-  if (targets.length) {
-    await dbBatchChunked(c.env, targets.map((uid) =>
-      c.env.DB.prepare("INSERT INTO reminders (event_id, user_id, kind, due_at) VALUES (?1, ?2, 'manual', ?3)")
-        .bind(e.event_id, uid, now())));
-  }
-  const ticks = Math.max(1, Math.ceil(targets.length / c.cfg.remindersPerTick));
+  // Everything below scales with the participant count (⌈n/40⌉ D1 batches), so
+  // it belongs after the deferral, not inside the 3-second response budget.
   bg(c, async () => {
+    const targets = await remindTargets(c, e);
+    if (targets.length) {
+      await dbBatchChunked(c.env, targets.map((uid) =>
+        c.env.DB.prepare("INSERT INTO reminders (event_id, user_id, kind, due_at) VALUES (?1, ?2, 'manual', ?3)")
+          .bind(e.event_id, uid, now())));
+    }
+    const ticks = Math.max(1, Math.ceil(targets.length / c.cfg.remindersPerTick));
     await editOriginal(c.env, c.i.token, {
-      content: `📣 Reminders queued for **${targets.length}** participant(s) — delivered within ~${ticks} minute(s).`,
+      content: targets.length
+        ? `📣 Reminders queued for **${targets.length}** participant(s) — delivered within ~${ticks} minute(s).`
+        : '📣 Nothing to nudge any more — everyone is up to date. 🎉',
       components: [],
     });
   });

@@ -136,10 +136,13 @@ export function stringSelect(
     placeholder: truncate(placeholder, 150),
     min_values: 1,
     max_values: 1,
+    // Labels and descriptions are prose and may be trimmed; VALUES are routing
+    // keys, so an over-long one must fail loudly at the API rather than arrive
+    // silently corrupted (and unroutable) with an ellipsis on the end.
     options: options.slice(0, 25).map((o) => ({
       ...o,
       label: truncate(o.label, 100),
-      value: truncate(o.value, 100),
+      value: o.value,
       description: o.description ? truncate(o.description, 100) : undefined,
     })),
   };
@@ -186,7 +189,7 @@ export function modalSelect(
       options: options.slice(0, 25).map((o) => ({
         ...o,
         label: truncate(o.label, 100),
-        value: truncate(o.value, 100),
+        value: o.value, // routing key — see stringSelect
       })),
     },
   };

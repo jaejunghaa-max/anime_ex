@@ -90,7 +90,7 @@ export function rankCandidates(norm: string, cjk: boolean, cands: AnimeCandidate
     const titles = cjk
       ? [c.title_jp ?? '', ...c.synonyms]
       : [c.title, c.title_en ?? '', c.title_jp ?? '', ...c.synonyms].map((t) => t.toLowerCase());
-    const prepared = titles.map((t) => (cjk ? t.normalize('NFKC') : t.normalize('NFKC'))).filter(Boolean);
+    const prepared = titles.map((t) => t.normalize('NFKC')).filter(Boolean);
     const best = prepared.reduce((acc, t) => Math.max(acc, matchScore(norm, t)), 0);
     const tiebreak = c.members > 0 ? Math.min(10, Math.log10(c.members)) : 0;
     return { ...c, score: best + tiebreak };

@@ -8,6 +8,13 @@ import { GOOGLE_SCOPE, invalidateTokenCache } from './google';
 import { repaintPanels } from './panels';
 import { encryptToken, now } from './util';
 
+/** Values interpolated into the page below come from Google; escape anyway —
+ *  the assumption that a source is trustworthy outlives the source. */
+function esc(v: string): string {
+  return v.replace(/[&<>"']/g, (ch) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
+}
+
 function page(title: string, body: string, ok: boolean): Response {
   return new Response(
     `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -79,5 +86,5 @@ export async function oauthCallback(env: Env, cfg: Cfg, ec: ExecutionContext, ur
   invalidateTokenCache(stateRow.guild_id);
   ec.waitUntil(repaintPanels(env, cfg, stateRow.guild_id).catch(() => {}));
 
-  return page('✅ Google connected', `Connected as <b>${email}</b>. You can close this tab and return to Discord.`, true);
+  return page('✅ Google connected', `Connected as <b>${esc(email)}</b>. You can close this tab and return to Discord.`, true);
 }

@@ -114,13 +114,6 @@ export function isConnected(guild: GuildRow): boolean {
   return !!guild.google_refresh_token_enc;
 }
 
-/** Email shown on the panel; drive.file-safe (Drive "about" needs no extra scope). */
-export function fetchConnectedEmail(env: Env, guild: GuildRow): Promise<string | null> {
-  return gapi<{ user?: { emailAddress?: string } }>(
-    env, guild, 'GET', 'https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)',
-  ).then((r) => r.user?.emailAddress ?? null).catch(() => null);
-}
-
 // ------------------------------------------------------------------ Drive
 
 export interface DriveFileMeta { modifiedTime?: string }
@@ -175,22 +168,21 @@ export async function createDoc(env: Env, guild: GuildRow, title: string): Promi
 }
 
 /**
- * Write the small review template (§7.5): H1 title + context line + divider,
- * plus one H2 section per anime when the participant got several picks.
+ * Write the small review template (§7.5): H1 title + context line + divider.
  * `givenTo` arrives preformatted, e.g. `J(@j_handle)`.
+ *
+ * (Pre-v6 this also emitted one H2 per anime, because a participant had one
+ * doc for all of their picks. Since v6 every anime has its own doc, so the
+ * section list was always empty and is gone.)
  */
 export async function writeDocTemplate(
   env: Env, guild: GuildRow, docId: string,
-  t: { heading: string; givenTo: string; deadlineText: string; sections: string[] },
+  t: { heading: string; givenTo: string; deadlineText: string },
 ): Promise<void> {
-  const parts: Array<{ text: string; style?: 'HEADING_1' | 'HEADING_2' }> = [
+  const parts: Array<{ text: string; style?: 'HEADING_1' }> = [
     { text: `${t.heading}\n`, style: 'HEADING_1' },
     { text: `given to ${t.givenTo} — deadline ${t.deadlineText}\n————————————————\n\n` },
   ];
-  for (const title of t.sections) {
-    parts.push({ text: `${title}\n`, style: 'HEADING_2' });
-    parts.push({ text: '\n' });
-  }
   // Build the text and the paragraph-style ranges in one pass; Docs indices
   // start at 1 and each part's range covers its own trailing newline.
   let text = '';

@@ -64,7 +64,16 @@ export async function drainJobs(env: Env, cfg: Cfg): Promise<void> {
   }
   const guild = await env.DB.prepare('SELECT * FROM guilds WHERE guild_id = ?1')
     .bind(event.guild_id).first<GuildRow>();
-  if (!guild) return;
+  if (!guild) {
+    // Retire it like the missing-event case above. Returning bare left the job
+    // with its original attempted_at, so it re-sorted first every tick and no
+    // other guild's jobs could ever run — and with attempts stuck at 0 the
+    // panel's stall banner would never appear either.
+    console.error(`job ${job.id} (${job.kind}): guild ${event.guild_id} is gone — retiring`);
+    await env.DB.prepare("UPDATE jobs SET done_at = ?1, last_error = 'guild row missing' WHERE id = ?2")
+      .bind(now(), job.id).run();
+    return;
+  }
 
   try {
     switch (job.kind) {
@@ -187,7 +196,7 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
       // rows signed up before the username column existed.
       const givenTo = owner.username ? `${owner.display_name}(@${owner.username})` : owner.display_name;
       await writeDocTemplate(env, guild, id, {
-        heading: `Review of ${anime}`, givenTo, deadlineText, sections: [],
+        heading: `Review of ${anime}`, givenTo, deadlineText,
       });
       const template = await driveExportText(env, guild, id);
       const perm = await driveShareAnyone(env, guild, id, 'writer'); // link-as-capability (§8.4)

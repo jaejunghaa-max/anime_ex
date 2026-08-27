@@ -206,6 +206,8 @@ anime:
 - The panel shows the live count and links the sheet in its body (as every
   later state does — `Sheet: https://…`); **🔄 Refresh** updates the count
   instantly instead of waiting out the 1-minute throttle.
+- **📋 View Sign-ups** — a private list of the most recent sign-ups plus the
+  running total, without leaving Discord for the sheet.
 - **⏰ Auto-stop** — a toggle here (and again during Recommending and Running):
   ON closes sign-ups automatically at the deadline.
 - If the deadline passes with auto-stop off, the participant panel shows
@@ -247,9 +249,11 @@ many **participants** have an accepted anime, and how many **picks** are
 accepted out of everything people asked for.
 
 - **🔄 Refresh** — queues a repaint; the panel and sheet update within a
-  minute or two. The per-person detail (who was picked what, ✅/⏳/😞 status,
-  decline counts) lives in the sheet's **Recommendation / Rec. Status**
-  columns — the sheet is linked in the panel body.
+  minute or two.
+- **📊 View Status** — the per-person detail privately in Discord: who was
+  picked what, ✅/⏳/😞 per pick, each person's maximum, and how many Sorry😞s
+  they have spent. The same picture (minus the decline counts) lives in the
+  sheet's **Recommendation / Rec. Status** columns.
 - **⏰ Auto-stop** — ON locks every ⏳ pending pick at the recommendation
   deadline, so the back-and-forth ends on time. Launching stays your call.
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
@@ -333,15 +337,19 @@ and the whole sheet is a dashboard.
 | Thing | How fast |
 |---|---|
 | Sign-up count on the manager panel | instant when quiet; ≤ ~1–2 min during a burst |
-| Threads + Santa missions at Start Recommending | ~5 participants per minute |
+| Threads + Santa missions at Start Recommending | ~5 participants per minute (slower if another event is running) |
 | Picks per person | 1–3, chosen by each participant at sign-up |
 | Pick sent / approved / declined | instant (card + sheet cell update on the spot) |
 | Recommending progress counts on the panels | instant at milestones; otherwise ≤ ~1 min |
-| Review docs + assignment cards at Launch | ~5 docs per minute, then ~5 cards per minute |
+| Review docs + assignment cards at Launch | ~5 docs per minute, then ~5 messages per minute (docs first, then cards) |
 | Review Length / started-writing / Rating in sheet & panel | every 30 min, plus on every **🔄 Refresh** click |
 | Reminders | up to 30 messages per minute |
 | Close (flips + reveals) | ~5 participants per minute, docs flip first |
 | Auto-stop / deadline banner | checked every 15 min |
+
+The batched rates above are for one event at a time: the bot drains one batch
+per minute across the whole Worker, and a minute spent delivering reminders
+delivers no batches. With two events running, expect roughly half the rate.
 
 The bot runs on Cloudflare's free tier — everything that touches many
 participants is deliberately batched, which is why big actions take a few

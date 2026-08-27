@@ -121,9 +121,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'back_matching': return arg === 'go' ? mgr.backMatchingGo(c) : mgr.backMatching(c);
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
     // RUNNING / RECOMMENDING (manager)
-    case 'refresh':
-    case 'view_event': // pre-3.1 panels
-      return mgr.refreshStatus(c);
+    case 'refresh': return mgr.refreshStatus(c);
     case 'remind': return arg === 'go' ? mgr.remindNowGo(c) : mgr.remindNow(c);
     case 'close':
       return arg === 'gallery' ? mgr.closeGo(c) : mgr.closeReviews(c);
@@ -131,10 +129,8 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'finish': return arg === 'go' ? mgr.finishGo(c) : mgr.finish(c);
     // any non-IDLE state (manager)
     case 'abort': return arg === 'go' ? mgr.abortGo(c) : mgr.abort(c);
-    // participant wizard ('edit_signup' = pre-3.2 panels; same flow now)
-    case 'signup':
-    case 'edit_signup':
-      return su.signupStart(c);
+    // participant wizard
+    case 'signup': return su.signupStart(c);
     case 'signup_cont': return su.signupContinue(c);
     case 'signup_again': return su.signupAgain(c);
     case 'signup_restart': return su.signupRestart(c);
@@ -151,7 +147,12 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'reco_no': return reco.recoDecline(c, arg, arg2);
     case 'reco_undo': return reco.recoUndoMenu(c, arg);
     case 'reco_undo_pick': return reco.recoUndoPick(c, arg);
-    case 'reco_me': return reco.recoStatusMe(c);
+    // Legacy ids: a panel pinned by an older deploy is still live in someone's
+    // channel, so its buttons keep working rather than answering "unknown
+    // control". Nothing current emits these.
+    case 'view_event': return mgr.refreshStatus(c);      // pre-3.1
+    case 'edit_signup': return su.signupStart(c);        // pre-3.2
+    case 'reco_me': return reco.recoStatusMe(c);         // pre-3.2
     default:
       return stale(c, 'This control is from an older version of the panel.');
   }

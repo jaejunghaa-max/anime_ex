@@ -283,10 +283,10 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
   const signup = (over: Partial<SignupRow>): SignupRow => ({
     signup_id: 1, event_id: 1, user_id: 'u1', display_name: 'A', username: 'a',
     list_url: 'https://myanimelist.net/profile/a', answers_json: '{}', row_order: 0, group_no: 1,
-    declines_used: 0, reco_declined_json: '[]', reco_card_posted: 0, thread_id: null,
-    mission_msg_id: null, doc_id: null, doc_url: null, perm_id: null, dm_channel_id: null,
-    assignment_posted: 0, doc_readonly: 0, reveal_posted: 0, synced_at: null, template_chars: 0,
-    doc_missing: 0, wrote: 0, last_edited: null, char_count: 0, max_recos: 3,
+    declines_used: 0, reco_card_posted: 0, thread_id: null,
+    mission_msg_id: null, dm_channel_id: null,
+    assignment_posted: 0, reveal_posted: 0, synced_at: null,
+    doc_missing: 0, wrote: 0, char_count: 0, max_recos: 3,
     created_at: 0, updated_at: 0, ...over,
   });
   const event = {

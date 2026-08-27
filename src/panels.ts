@@ -126,6 +126,18 @@ function abortingLine(stats: PanelStats): string {
     : '';
 }
 
+/**
+ * Honest per-tick estimate. Each entry is one drain pass with its own budget,
+ * so their tick counts add. The floor is deliberate rather than exact: the
+ * dispatcher runs ONE job per tick across every guild, and a tick that
+ * delivers reminders skips job draining entirely, so a single-event estimate
+ * is the best case and the wording has to say so.
+ */
+function etaMinutes(passes: number[], batch: number): string {
+  const ticks = passes.reduce((acc, n) => acc + Math.ceil(Math.max(0, n) / Math.max(1, batch)), 0);
+  return `~${Math.max(1, ticks)} min remaining, longer if other events are running`;
+}
+
 const abortBtn = () => btn('ax:abort', '🛑 Abort', Style.DANGER);
 
 const googleBtnLabel = (g: GuildRow) => (isConnected(g) ? '🔗 Reconnect Google' : '🔗 Connect Google');
@@ -210,6 +222,7 @@ export function renderManagerPanel(
         })],
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
+          btn('ax:view_signups', '📋 View Sign-ups'),
           autostopBtn(e),
           btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
           abortBtn(),
@@ -236,20 +249,25 @@ export function renderManagerPanel(
             btn('ax:shuffle', '🔀 Shuffle'),
             btn('ax:validate', '✅ Validate'),
           ),
-          row(btn('ax:reopen', '↩ Reopen Sign-Ups'), btn('ax:reco_start', '🎯 Start Recommending', Style.SUCCESS), abortBtn()),
+          row(
+            btn('ax:view_signups', '📋 View Sign-ups'),
+            btn('ax:reopen', '↩ Reopen Sign-Ups'),
+            btn('ax:reco_start', '🎯 Start Recommending', Style.SUCCESS),
+            abortBtn(),
+          ),
         ],
       };
     }
     case 'PREPARING': {
       const remaining = Math.max(0, stats.count - stats.prepared);
-      const eta = Math.max(1, Math.ceil(remaining / cfg.jobBatch));
+      const eta = etaMinutes([remaining], cfg.jobBatch);
       return {
         content: '',
         embeds: [embed({
           title: `🎯 Preparing — ${e.topic}`,
           description:
             sheetTop(e) +
-            `Creating private threads and delivering Santa missions… **${stats.prepared} / ${stats.count}** · ~${eta} min remaining (automatic)` +
+            `Creating private threads and delivering Santa missions… **${stats.prepared} / ${stats.count}** · ${eta} (automatic)` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],
@@ -282,6 +300,7 @@ export function renderManagerPanel(
         components: [
           row(
             btn('ax:refresh', '🔄 Refresh'),
+            btn('ax:reco_view', '📊 View Status'),
             btn('ax:remind', '📣 Remind Now'),
             autostopBtn(e),
           ),
@@ -294,9 +313,13 @@ export function renderManagerPanel(
       };
     }
     case 'LAUNCHING': {
-      // Docs are per ANIME, cards per PARTICIPANT — two different totals.
-      const remaining = Math.max(0, stats.docsTotal - stats.docsMade) + Math.max(0, stats.count - stats.launched);
-      const eta = Math.max(1, Math.ceil(remaining / cfg.jobBatch));
+      // Docs are per ANIME, cards per PARTICIPANT — and they drain in two
+      // separate passes, each spending the whole per-tick budget, so the ticks
+      // add rather than the totals. Pass 2 costs 1 + (their anime) messages.
+      const docsLeft = Math.max(0, stats.docsTotal - stats.docsMade);
+      const peopleLeft = Math.max(0, stats.count - stats.launched);
+      const messagesLeft = peopleLeft > 0 ? peopleLeft + stats.docsTotal - stats.docsFlipped : 0;
+      const eta = etaMinutes([docsLeft, messagesLeft], cfg.jobBatch);
       return {
         content: '',
         embeds: [embed({
@@ -304,7 +327,7 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             `**${stats.docsMade} / ${stats.docsTotal}** review docs (one per anime) · ` +
-            `**${stats.launched} / ${stats.count}** assignment cards · ~${eta} min remaining (automatic)` +
+            `**${stats.launched} / ${stats.count}** assignment cards · ${eta} (automatic)` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(abortBtn())],

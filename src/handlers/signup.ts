@@ -1,5 +1,5 @@
-// Signup wizard (v3): Modal A (MAL/AniList link + items 1–4) → optional
-// Modal B (items 5–9) → summary card → confirm. No anime is picked at signup
+// Signup wizard (v3): Modal A (picks + MAL/AniList link + items 1–3) →
+// optional Modal B (items 4–8) → summary card → confirm. No anime is picked at signup
 // anymore — the built-in form item is the participant's list link, which their
 // Secret Santa later uses to choose FOR them (handlers/reco.ts). Wizard
 // progress lives in signup_drafts because every modal/select is a separate

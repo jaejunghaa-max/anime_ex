@@ -82,8 +82,6 @@ export interface EventRow {
   dm_mirror: number;
   /** v3: how many times each participant may "Sorry😞" a recommendation (0–9). */
   max_declines: number;
-  /** Unused since v6 — the pick maximum is the recipient's own choice. */
-  max_recos: number;
   /** The @everyone sign-up announcement, so Abort can clean it up. */
   announce_msg_id: string | null;
   /** Manager-editable label/description of the built-in list-link item. */
@@ -92,7 +90,6 @@ export interface EventRow {
   sheet_id: string | null;
   sheet_gid: number | null;
   gallery_posted: number;
-  loop_status: 'none' | 'shuffled' | 'manual'; // unused since rev. 3 (column kept; panel shows the loops summary instead)
   validated_at: number | null;
   count_panel_at: number;
   panel_dirty: number;
@@ -159,6 +156,14 @@ export interface RecoRow {
   updated_at: number;
 }
 
+/**
+ * Note: the DB still carries columns this type omits — events.max_recos and
+ * loop_status, signups.reco_declined_json and the pre-v6 per-person doc block
+ * (doc_id, doc_url, perm_id, doc_readonly, template_chars, last_edited).
+ * Nothing reads or writes them since v6; they are dropped from the types so a
+ * reader does not have to work out that they are inert, and left in the schema
+ * because removing a column in SQLite means rebuilding the table.
+ */
 export interface SignupRow {
   signup_id: number;
   event_id: number;
@@ -177,22 +182,16 @@ export interface SignupRow {
   group_no: number;
   /** Sorry😞 budget spent, counted per person across all slots. */
   declines_used: number;
-  reco_declined_json: string;
   reco_card_posted: number;
   thread_id: string | null;
-  // Deprecated since v6 (docs live on `recos`); kept so old rows still read.
-  doc_id: string | null;
-  doc_url: string | null;
-  perm_id: string | null;
   dm_channel_id: string | null;
   assignment_posted: number;
-  doc_readonly: number;
   reveal_posted: number;
+  /** Per-participant rollups of their `recos` rows, kept as the panel and
+   *  reminder cache (syncTick recomputes them). */
   synced_at: number | null;
-  template_chars: number;
   doc_missing: number;
   wrote: number;
-  last_edited: number | null;
   char_count: number;
   created_at: number;
   updated_at: number;

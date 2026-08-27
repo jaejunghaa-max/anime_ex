@@ -120,18 +120,6 @@ export function answersOf(s: { answers_json: string }): Record<string, string> {
   }
 }
 
-export interface DeclinedEntry { mal_id: number; title: string }
-
-/** Titles a giftee has already sent back — their Santa may not re-pick these. */
-export function declinedOf(s: Pick<SignupRow, 'reco_declined_json'>): DeclinedEntry[] {
-  try {
-    const arr = JSON.parse(s.reco_declined_json) as DeclinedEntry[];
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
-  }
-}
-
 export function optionsOf(item: FormItem): string[] {
   try {
     return item.options_json ? (JSON.parse(item.options_json) as string[]) : [];

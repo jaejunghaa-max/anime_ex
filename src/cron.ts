@@ -21,6 +21,11 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
   if (minute % 15 === 0) {
     await deadlineChecks(env, cfg).catch((e) => console.error('deadline checks', e));
   }
+  if (minute === 7) {
+    // Hourly sweep. Neither table had any eviction: oauth_states was pruned
+    // only when someone happened to press Connect Google, and mal_cache never.
+    await pruneCaches(env).catch((e) => console.error('cache prune', e));
+  }
   if (minute % 30 === 0) {
     // Wrote-detection every 30 min; 🔄 Refresh clicks enqueue on demand.
     await enqueuePeriodicSyncs(env).catch((e) => console.error('sync enqueue', e));
@@ -36,6 +41,15 @@ export async function cronTick(env: Env, cfg: Cfg, scheduledTimeMs: number): Pro
   if (sent === 0) {
     await drainJobs(env, cfg).catch((e) => console.error('job drain', e));
   }
+}
+
+/** Expired OAuth states and search results nobody can still read (2× the
+ *  24 h cache TTL, so a row is only dropped well after it stopped counting). */
+async function pruneCaches(env: Env): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM oauth_states WHERE expires_at < ?1').bind(now()),
+    env.DB.prepare('DELETE FROM mal_cache WHERE fetched_at < ?1').bind(now() - 48 * 3600),
+  ]);
 }
 
 // -------------------------------------------- throttled signup-count panels

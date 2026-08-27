@@ -36,7 +36,7 @@ export function colLetter(n: number): string {
 }
 
 // Fixed columns before the custom items block.
-const FIXED = 4; // A Row#, B User ID, C Username, D MAL/AniList
+const FIXED = 4; // A Row#, B User ID, C Display name, D MAL/AniList
 
 export interface Layout {
   itemCount: number;
@@ -93,7 +93,7 @@ export function headerRow(items: FormItem[], maxRecos = 1): string[] {
     );
   }
   return [
-    'Row #', 'User ID 🔑', 'Username', 'MAL/AniList',
+    'Row #', 'User ID 🔑', 'Display name', 'MAL/AniList',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
     'Group', 'Secret Santa', ...recoHeaders,
   ];
@@ -173,12 +173,12 @@ function dataRow(
 }
 
 /**
- * Clear + rewrite the header and data block from D1 (idempotent, used by
- * signup upsert/withdraw, Shuffle, Grouping, Validate, restore, and the
+ * Rewrite the header and data block from D1, then sweep what is left over
+ * (idempotent; used by withdraw, Shuffle, Grouping, Validate, restore, and the
  * job-completion self-heal). Including the header row makes layout changes
- * self-heal on sheets created by older deployments; the clear range sweeps a
- * few extra columns for the same reason. Derived columns fill per group once
- * the loop order has been adopted (row_order non-NULL).
+ * self-heal on sheets created by older deployments, and the sweep reaches a few
+ * columns past the block for the same reason. Derived columns fill per group
+ * once the loop order has been adopted (row_order non-NULL).
  */
 export async function rewriteSheet(
   env: Env, guild: GuildRow, event: EventRow, items: FormItem[], ordered: SignupRow[],
@@ -303,8 +303,8 @@ export async function writeRecoRows(
     .bind(event.event_id).first<{ n: number }>();
   const slots = Math.min(MAX_PICKS, Math.max(1, widest?.n ?? 1));
   const layout = layoutOf(items, slots);
-  const from = colLetter(layout.recoCol);
-  const to = colLetter(layout.recoCol + slots * PER_RECO - 1);
+  const from = colLetter(slotCol(layout, 1));
+  const to = colLetter(slotCol(layout, slots) + PER_RECO - 1);
   await valuesBatchUpdate(env, guild, event.sheet_id, usable.map(({ row, recos }) => ({
     range: a1(`${from}${row.row_order! + 2}:${to}${row.row_order! + 2}`),
     values: [recoRowCells(row, recos, slots)],
