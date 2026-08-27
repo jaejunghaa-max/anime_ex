@@ -10,7 +10,7 @@ import { modalFields } from '../types';
 import { btn, editOriginal, embed, modalSelect, modalText, respond, row, Style } from '../discord';
 import type { RecoRow, SignupRow } from '../types';
 import { activeRecos, answersOf, countSignups, getItems, getSignup, optionsOf, orderedSignups } from '../db';
-import { MAX_PICKS, rewriteSheet, writeRecoCells } from '../sheet';
+import { MAX_PICKS, rewriteSheet, sheetSlots, writeRecoCells, writeSignupRow } from '../sheet';
 import { normalizeListUrl, now, sanitizeName, truncate } from '../util';
 import { bg, HCtx, stale, throttledCountRepaint } from './common';
 
@@ -365,7 +365,18 @@ export async function signupConfirm(c: HCtx): Promise<Response> {
     try {
       const items = await getItems(c.env, e.event_id);
       const ordered = await orderedSignups(c.env, e.event_id);
-      await rewriteSheet(c.env, c.guild, e, items, ordered);
+      // Only this participant's row changed. A full rewrite is needed just
+      // when the widest pick count moves, because that reshapes every row's
+      // slot block (and the header with it).
+      const before = existing
+        ? ordered.map((s) => (s.user_id === c.userId ? { ...s, max_recos: existing.max_recos } : s))
+        : ordered.filter((s) => s.user_id !== c.userId);
+      const idx = ordered.findIndex((s) => s.user_id === c.userId);
+      if (idx >= 0 && sheetSlots(ordered) === sheetSlots(before)) {
+        await writeSignupRow(c.env, c.guild, e, items, ordered, idx);
+      } else {
+        await rewriteSheet(c.env, c.guild, e, items, ordered);
+      }
     } catch (err) {
       console.error('sheet upsert failed (reconciled at Validate)', err);
       sheetNote = '\n*(sheet update pending — the manager\'s Validate reconciles it)*';

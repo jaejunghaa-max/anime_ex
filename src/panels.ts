@@ -379,7 +379,7 @@ const howItWorks = (maxDeclines: number): string =>
   'Who picked yours stays secret until the reveal. 🎁';
 
 export function renderParticipantPanel(
-  cfg: Cfg, guild: GuildRow, event: EventRow | null, stats: PanelStats,
+  event: EventRow | null, stats: PanelStats,
 ): Record<string, unknown> {
   const title = '🎁 Anime Exchange';
   if (!event || event.state === 'DRAFTING') {
@@ -494,6 +494,16 @@ export function renderParticipantPanel(
 
 // ----------------------------------------------------------------- repaint
 
+function countOptions(optionsJson: string | null): number {
+  if (!optionsJson) return 0;
+  try {
+    const parsed = JSON.parse(optionsJson) as unknown;
+    return Array.isArray(parsed) ? parsed.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function loadPanelState(env: Env, guildId: string): Promise<{
   guild: GuildRow; event: EventRow | null; stats: PanelStats; items: ItemSummary[];
 } | null> {
@@ -510,8 +520,11 @@ async function loadPanelState(env: Env, guildId: string): Promise<{
       .bind(event.event_id).all<{ label: string; type: 'FIB' | 'MCQ'; options_json: string | null; visible_to_recommender: number }>();
     items = res.results.map((r) => ({
       label: r.label,
+      // Guarded like every other reader (db.optionsOf): an unguarded parse here
+      // threw out of loadPanelState, and since callers swallow repaint errors
+      // both panels would silently stop updating instead of failing loudly.
+      optionCount: countOptions(r.options_json),
       type: r.type,
-      optionCount: r.options_json ? (JSON.parse(r.options_json) as string[]).length : 0,
       visible: !!r.visible_to_recommender,
     }));
   }
@@ -535,7 +548,7 @@ export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promis
   if (guild.participant_channel_id && guild.participant_msg_id) {
     jobs.push(
       editMessage(env, guild.participant_channel_id, guild.participant_msg_id,
-        renderParticipantPanel(cfg, guild, event, stats))
+        renderParticipantPanel(event, stats))
         .catch((e) => console.error('participant panel repaint failed', e)),
     );
   }
@@ -546,11 +559,16 @@ export async function repaintPanels(env: Env, cfg: Cfg, guildId: string): Promis
 export async function postAndPinPanel(env: Env, channelId: string, payload: unknown): Promise<string> {
   const msg = await postMessage(env, channelId, payload);
   await pinMessage(env, channelId, msg.id).catch(() => {});
-  const recent = await dapi<Array<{ id: string; type: number }>>(
+  type Recent = { id: string; type: number; author?: { id: string } };
+  const recent = await dapi<Recent[]>(
     env, 'GET', `/channels/${channelId}/messages?limit=5`,
-  ).catch(() => [] as Array<{ id: string; type: number }>);
+  ).catch(() => [] as Recent[]);
   for (const m of recent) {
-    if (m.type === 6) await dapi(env, 'DELETE', `/channels/${channelId}/messages/${m.id}`).catch(() => {});
+    // Type 6 is "pinned a message". Only sweep our own — deleting by type alone
+    // would take down a notice someone else's pin produced.
+    if (m.type === 6 && m.author?.id === env.DISCORD_APP_ID) {
+      await dapi(env, 'DELETE', `/channels/${channelId}/messages/${m.id}`).catch(() => {});
+    }
   }
   return msg.id;
 }
@@ -567,12 +585,14 @@ export async function repostPanels(env: Env, cfg: Cfg, guildId: string): Promise
   const { guild, event, stats, items } = s;
   const targets = [
     {
-      channel: guild.manager_channel_id, msg: guild.manager_msg_id,
-      column: 'manager_msg_id', payload: renderManagerPanel(cfg, guild, event, stats, items),
+      channel: guild.manager_channel_id, msg: guild.manager_msg_id, column: 'manager_msg_id',
+      sql: 'UPDATE guilds SET manager_msg_id = ?1 WHERE guild_id = ?2',
+      payload: renderManagerPanel(cfg, guild, event, stats, items),
     },
     {
-      channel: guild.participant_channel_id, msg: guild.participant_msg_id,
-      column: 'participant_msg_id', payload: renderParticipantPanel(cfg, guild, event, stats),
+      channel: guild.participant_channel_id, msg: guild.participant_msg_id, column: 'participant_msg_id',
+      sql: 'UPDATE guilds SET participant_msg_id = ?1 WHERE guild_id = ?2',
+      payload: renderParticipantPanel(event, stats),
     },
   ];
   for (const t of targets) {
@@ -582,8 +602,9 @@ export async function repostPanels(env: Env, cfg: Cfg, guildId: string): Promise
         await dapi(env, 'DELETE', `/channels/${t.channel}/messages/${t.msg}`).catch(() => {});
       }
       const id = await postAndPinPanel(env, t.channel, t.payload);
-      await env.DB.prepare(`UPDATE guilds SET ${t.column} = ?1 WHERE guild_id = ?2`)
-        .bind(id, guildId).run();
+      // Literal statements rather than an interpolated column name: the values
+      // are safe today, but a built statement is one refactor from taking input.
+      await env.DB.prepare(t.sql).bind(id, guildId).run();
     } catch (e) {
       console.error(`panel repost failed for ${t.column}`, e);
     }

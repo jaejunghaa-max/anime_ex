@@ -11,7 +11,7 @@ import {
 } from '../discord';
 import {
   activeRecos, finalRecos, getItems, countSignups, dbBatchChunked, loopContext, optionsOf,
-  orderedSignups, pendingRecos, picksLeft, recosOf, transition,
+  orderedSignups, pendingRecos, recosOf, transition,
 } from '../db';
 import { repostPanels } from '../panels';
 import { LINK_DESC_DEFAULT, LINK_LABEL_DEFAULT } from './signup';
@@ -1047,7 +1047,7 @@ async function remindTargets(c: HCtx, e: EventRow): Promise<string[]> {
     const slots = recosOf(recos, s.signup_id);
     // Their Santa hasn't got them anything yet (picks are a maximum, so one
     // live pick is enough to be off the hook)…
-    if (activeRecos(slots).length === 0 && picksLeft(s, slots) > 0) {
+    if (activeRecos(slots).length === 0) {
       targets.add(all[loops.santa[idx]!]!.user_id);
     }
     // …or they owe a reply on one.

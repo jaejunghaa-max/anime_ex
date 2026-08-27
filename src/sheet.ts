@@ -190,9 +190,6 @@ export async function rewriteSheet(
   const derived = ordered.length >= 2 && ordered.every((s) => s.row_order !== null);
   const loops: LoopMap | null = derived ? buildLoops(ordered.map((s) => s.group_no)) : null;
   const end = colLetter(layout.lastCol);
-  // Sweep a few extra columns: a participant lowering their pick count shrinks
-  // the block, and the leftovers must not linger.
-  await valuesClear(env, guild, event.sheet_id, a1(`A2:${colLetter(layout.lastCol + 12)}1000`));
   const values = [
     headerRow(items, slots),
     ...ordered.map((s, i) => dataRow(
@@ -200,7 +197,41 @@ export async function rewriteSheet(
       recosOf(recos, s.signup_id), slots,
     )),
   ];
+  // Write BEFORE clearing. These are two separate API calls with no
+  // transaction between them, so clearing first left the sheet visibly blank
+  // until the update landed — and two interleaved writers could clear away
+  // rows the other had just written. Overwriting in place has no such window;
+  // only the region past the new data still needs sweeping.
   await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${end}${ordered.length + 1}`), values);
+  // Rows below the block (a participant withdrew) and columns past it (someone
+  // lowered their pick count, shrinking the per-slot block).
+  await valuesClear(env, guild, event.sheet_id, a1(`A${ordered.length + 2}:${colLetter(layout.lastCol + 12)}1000`));
+  await valuesClear(env, guild, event.sheet_id,
+    a1(`${colLetter(layout.lastCol + 1)}1:${colLetter(layout.lastCol + 12)}${ordered.length + 1}`));
+}
+
+/**
+ * Rewrite ONE participant's whole row. Used by the sign-up wizard, where the
+ * full rewrite above costs a clear + an update per confirmation — ~200 Sheets
+ * calls over a 100-person sign-up window, all of them rewriting rows that did
+ * not change. Only valid while the layout is stable: a change to the widest
+ * pick count moves every row's slot block and needs the full rewrite.
+ */
+export async function writeSignupRow(
+  env: Env, guild: GuildRow, event: EventRow, items: FormItem[],
+  ordered: SignupRow[], index: number,
+): Promise<void> {
+  const s = ordered[index];
+  if (!event.sheet_id || !s) return;
+  const slots = sheetSlots(ordered);
+  const layout = layoutOf(items, slots);
+  const derived = ordered.length >= 2 && ordered.every((r) => r.row_order !== null);
+  const loops: LoopMap | null = derived ? buildLoops(ordered.map((r) => r.group_no)) : null;
+  await valuesUpdate(
+    env, guild, event.sheet_id,
+    a1(`A${index + 2}:${colLetter(layout.lastCol)}${index + 2}`),
+    [dataRow(s, index, loops ? ordered[loops.santa[index]!] : undefined, items, [], slots)],
+  );
 }
 
 /** Full rewrite straight from D1 — the common "reconcile the sheet" call. */

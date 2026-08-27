@@ -23,12 +23,31 @@ export function isAdmin(i: Interaction): boolean {
   }
 }
 
-async function exists(env: Env, path: string): Promise<boolean> {
+/**
+ * Does the stored resource still exist?
+ *
+ * Only 404 means gone. A 403 means it is there but the bot cannot see it —
+ * treating that as "missing" made `/setup repair` create a duplicate channel
+ * and abandon the original along with its pinned panel and history, which is
+ * exactly what happens when someone runs `repair` *because* permissions broke.
+ * Keep the stored id and tell the manager what to fix.
+ */
+async function exists(env: Env, path: string, notes: string[]): Promise<boolean> {
   try {
     await dapi(env, 'GET', path);
     return true;
   } catch (e) {
-    if (e instanceof DiscordApiError && (e.status === 404 || e.status === 403)) return false;
+    if (e instanceof DiscordApiError) {
+      if (e.status === 404) return false;
+      if (e.status === 403) {
+        notes.push(
+          `Could not verify \`${path}\` — the bot is denied access (403). Keeping the existing ` +
+          'resource rather than creating a duplicate. Give the bot **View Channel** (and **Read ' +
+          'Message History**) there, then run `/setup repair` again.',
+        );
+        return true;
+      }
+    }
     throw e;
   }
 }
@@ -92,7 +111,7 @@ async function doSetup(
   }
 
   // 2 + 3. Channels.
-  if (!g.manager_channel_id || !(await exists(env, `/channels/${g.manager_channel_id}`))) {
+  if (!g.manager_channel_id || !(await exists(env, `/channels/${g.manager_channel_id}`, notes))) {
     const ch = await createChannel(env, guildId, MANAGER_CHANNEL,
       'Anime Exchange — manager controls. Buttons on the pinned panel.',
       managerChannelOverwrites(guildId, g.manager_role_id!, botId));
@@ -106,7 +125,7 @@ async function doSetup(
       permission_overwrites: managerChannelOverwrites(guildId, g.manager_role_id!, botId),
     }).catch((e) => console.error('manager channel perms patch failed', e));
   }
-  if (!g.participant_channel_id || !(await exists(env, `/channels/${g.participant_channel_id}`))) {
+  if (!g.participant_channel_id || !(await exists(env, `/channels/${g.participant_channel_id}`, notes))) {
     const ch = await createChannel(env, guildId, PARTICIPANT_CHANNEL,
       'Anime Exchange — sign up on the pinned panel. Your assignment arrives in a private thread.',
       participantChannelOverwrites(guildId, botId));
@@ -123,14 +142,14 @@ async function doSetup(
   const event = await env.DB.prepare('SELECT * FROM events WHERE guild_id = ?1')
     .bind(guildId).first<EventRow>();
   const stats = await panelStats(env, event);
-  if (!g.manager_msg_id || !(await exists(env, `/channels/${g.manager_channel_id}/messages/${g.manager_msg_id}`))) {
+  if (!g.manager_msg_id || !(await exists(env, `/channels/${g.manager_channel_id}/messages/${g.manager_msg_id}`, notes))) {
     g.manager_msg_id = await postAndPinPanel(env, g.manager_channel_id!,
       renderManagerPanel(cfg, g, event, stats, []));
     notes.push('Posted + pinned the manager panel.');
   }
-  if (!g.participant_msg_id || !(await exists(env, `/channels/${g.participant_channel_id}/messages/${g.participant_msg_id}`))) {
+  if (!g.participant_msg_id || !(await exists(env, `/channels/${g.participant_channel_id}/messages/${g.participant_msg_id}`, notes))) {
     g.participant_msg_id = await postAndPinPanel(env, g.participant_channel_id!,
-      renderParticipantPanel(cfg, g, event, stats));
+      renderParticipantPanel(event, stats));
     notes.push('Posted + pinned the participant panel.');
   }
 

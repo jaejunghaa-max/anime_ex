@@ -255,9 +255,15 @@ export async function searchAnime(env: Env, cfg: Cfg, rawQuery: string): Promise
   console.log(`anime search "${norm}": ${attempts.join(' | ')}`);
 
   const ranked = rankCandidates(norm, cjk, primary);
-  await env.DB
-    .prepare('INSERT OR REPLACE INTO mal_cache (qhash, results_json, fetched_at) VALUES (?1, ?2, ?3)')
-    .bind(qhash, JSON.stringify(ranked), now()).run();
+  // Never cache a miss. A source that answers 200 with nothing — reindexing, a
+  // normalization edge case, an over-tight SCORE_MIN cut — used to be stored
+  // exactly like a good answer, so one bad response made a title unsearchable
+  // for every guild for 24 hours with no way to bust it.
+  if (ranked.length > 0) {
+    await env.DB
+      .prepare('INSERT OR REPLACE INTO mal_cache (qhash, results_json, fetched_at) VALUES (?1, ?2, ?3)')
+      .bind(qhash, JSON.stringify(ranked), now()).run();
+  }
   return ranked;
 }
 

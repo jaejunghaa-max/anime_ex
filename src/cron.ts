@@ -3,9 +3,9 @@
 // per-invocation CPU/subrequest budget always holds (§2.4).
 
 import type { Cfg, Env, EventRow, GuildRow, RecoRow, SignupRow } from './types';
-import { btn, createDm, linkBtn, postMessage, row, Style } from './discord';
+import { btn, createDm, DiscordApiError, linkBtn, postMessage, row, Style } from './discord';
 import {
-  activeRecos, getItems, loadRecos, orderedSignups, pendingRecos, picksLeft, recosOf, transition,
+  activeRecos, getItems, loadRecos, orderedSignups, pendingRecos, recosOf, transition,
   type RecoMap,
 } from './db';
 import { drainJobs } from './jobs';
@@ -126,12 +126,18 @@ async function deadlineChecks(env: Env, cfg: Cfg): Promise<void> {
 async function enqueuePeriodicSyncs(env: Env): Promise<void> {
   const running = await env.DB.prepare("SELECT event_id FROM events WHERE state = 'RUNNING'")
     .all<{ event_id: number }>();
-  for (const e of running.results) {
+  for (const ev of running.results) {
     try {
       await env.DB.prepare("INSERT INTO jobs (event_id, kind, created_at) VALUES (?1, 'sync', ?2)")
-        .bind(e.event_id, now()).run();
-    } catch {
-      // active sync already queued — the partial unique index said no (§7.4)
+        .bind(ev.event_id, now()).run();
+    } catch (err) {
+      // Expected: the partial unique index rejecting a second active sync
+      // (§7.4). Anything else is a real fault and must not look identical to
+      // it, or the 30-minute wrote-detection would stop with no trace.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/UNIQUE|constraint/i.test(msg)) {
+        console.error(`periodic sync enqueue failed for event ${ev.event_id}`, err);
+      }
     }
   }
 }
@@ -218,7 +224,7 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
       // and room for more (picks are a maximum, not a quota).
       const gifteeRecos = giftee && giftee.signup_id !== r.signup_id
         ? recosOf(ctx.recos, giftee.signup_id) : [];
-      const owes = !!giftee && activeRecos(gifteeRecos).length === 0 && picksLeft(giftee, gifteeRecos) > 0;
+      const owes = !!giftee && activeRecos(gifteeRecos).length === 0;
       const pending = pendingRecos(myRecos);
       if (!owes && pending.length === 0) {
         done.push(r.id); // resolved since the nudge was queued — skip silently
@@ -273,10 +279,26 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
 
     const payload = { content: `<@${r.user_id}> ${text}${deadlineLine}`, components };
 
+    // `sent_at` is a delivery marker, so only stamp it when something actually
+    // went out. Stamping unconditionally silently swallowed every reminder for
+    // a participant whose thread was missing or deleted — and during
+    // RECOMMENDING the DM mirror is off, so there was no fallback either.
+    let delivered = false;
+    let permanent = false;
     if (r.thread_id) {
       // Posting auto-unarchives the thread, so reminders outlive the 7-day archive (§3.3).
-      await postMessage(env, r.thread_id, payload).catch((e) => console.error(`reminder thread post ${r.id}`, e));
+      try {
+        await postMessage(env, r.thread_id, payload);
+        delivered = true;
+      } catch (e) {
+        // 404/403 = the thread is gone or closed to us; retrying never helps.
+        permanent = e instanceof DiscordApiError && (e.status === 404 || e.status === 403);
+        console.error(`reminder thread post ${r.id} failed (${permanent ? 'permanent' : 'transient'})`, e);
+      }
       spent += 1;
+    } else {
+      permanent = true;
+      console.error(`reminder ${r.id}: participant ${r.user_id} has no thread — cannot deliver`);
     }
     if (mirror) {
       // Best-effort mirror (§10.2, RUNNING only — reco buttons need guild
@@ -290,11 +312,14 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
         }
         await postMessage(env, dm, { content: `${text}${deadlineLine}`, components });
         spent += 1;
+        delivered = true;
       } catch {
         /* ignored */
       }
     }
-    done.push(r.id);
+    // Transient failures stay queued for the next tick; permanent ones are
+    // retired so they cannot block the head of the queue forever.
+    if (delivered || permanent) done.push(r.id);
   }
 
   if (done.length || dmSaves.length) {
