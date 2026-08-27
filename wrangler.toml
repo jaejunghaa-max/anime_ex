@@ -5,8 +5,10 @@ compatibility_date = "2025-09-01"
 
 # ---------------------------------------------------------------------------
 # Non-secret config. Secrets are set with `wrangler secret put`:
-#   DISCORD_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY
+#   DISCORD_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENC_KEY,
+#   MAL_CLIENT_ID, DIAG_KEY
 # (TOKEN_ENC_KEY = 32 random bytes, base64 — e.g. `openssl rand -base64 32`)
+# (DIAG_KEY      = any random string; leave unset to disable /diag/search)
 # ---------------------------------------------------------------------------
 [vars]
 DISCORD_APP_ID = "1533788885727838288"
@@ -23,12 +25,16 @@ MAX_PARTICIPANTS = "100"
 JOB_BATCH = "5"
 REMINDERS_PER_TICK = "30"
 SFW_ONLY = "true"
-# Effectively REQUIRED for reliable search on Workers: an official MAL API v2
-# client id. Jikan (the only fallback) sits behind Cloudflare bot protection
-# that routinely 403s Workers egress traffic; the authenticated official API
-# is not subject to that. Get one free in ~2 minutes:
-# https://myanimelist.net/apiconfig ("Create ID", app type: other).
-MAL_CLIENT_ID = "0b17b0153ce210443a904e98ff279a1d"
+# MAL_CLIENT_ID is a SECRET — set it with `wrangler secret put MAL_CLIENT_ID`,
+# never here. It is account-bound and quota-limited: anyone holding it can
+# spend the quota, and the throttling surfaces as "search unavailable" in
+# every guild. (It lived in this file until v7.1; rotate any id that was.)
+#
+# Effectively REQUIRED for reliable search on Workers. Jikan (the only
+# fallback) sits behind Cloudflare bot protection that routinely 403s Workers
+# egress traffic; the authenticated official API is not subject to that. Get
+# one free in ~2 minutes: https://myanimelist.net/apiconfig ("Create ID", app
+# type: other).
 
 [[d1_databases]]
 binding = "DB"

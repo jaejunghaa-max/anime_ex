@@ -122,6 +122,8 @@ wrangler secret put DISCORD_TOKEN
 wrangler secret put GOOGLE_CLIENT_ID
 wrangler secret put GOOGLE_CLIENT_SECRET
 wrangler secret put TOKEN_ENC_KEY          # openssl rand -base64 32
+wrangler secret put MAL_CLIENT_ID           # https://myanimelist.net/apiconfig
+wrangler secret put DIAG_KEY                # optional; enables /diag/search
 npm run deploy
 ```
 
@@ -301,14 +303,17 @@ that. (AniList blocks Workers traffic outright, which is why it is not used
 at all.)
 
 1. **Set `MAL_CLIENT_ID`** (the real fix). Register a free client id at
-   <https://myanimelist.net/apiconfig> (Create ID → app type "other"), put it
-   in `wrangler.toml` `[vars]`, redeploy. The bot then talks to the official,
-   authenticated MAL API v2 first, which is not subject to those bot walls;
-   Jikan remains as the fallback.
+   <https://myanimelist.net/apiconfig> (Create ID → app type "other"), then
+   `wrangler secret put MAL_CLIENT_ID` and redeploy. It is a **secret**, not a
+   `[vars]` entry: it is account-bound and quota-limited, so anyone holding it
+   can spend the quota and the throttling surfaces as "search unavailable" in
+   every guild. The bot then talks to the official, authenticated MAL API v2
+   first, which is not subject to those bot walls; Jikan remains the fallback.
 2. **Probe from the Worker itself**:
-   `https://<worker>/diag/search?q=frieren&k=<last 8 chars of DISCORD_PUBLIC_KEY>`
-   returns per-source `ok/error` + timing, plus the running build id — this
-   shows exactly which upstream is failing with what status.
+   `https://<worker>/diag/search?q=frieren&k=<DIAG_KEY>` returns per-source
+   `ok/error` + timing, plus the running build id — this shows exactly which
+   upstream is failing with what status. The route is disabled (404) unless
+   `DIAG_KEY` is set, because it drives outbound requests on the bot's quota.
 3. **Check logs**: `npx wrangler tail` — every search logs one line per source
    attempt (`jikan:ok(20)`, `mal-official:MAL 403`, …).
 4. The health route `/` shows the deployed build id — confirm your deploy

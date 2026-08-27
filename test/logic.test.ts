@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLoops, chunkLines, dealSizes, epochToZoned, isValidTz, loopsPhrase, normalizeListUrl,
-  parseReminderDays, sanitizeName, shuffled, zonedToEpoch,
+  parseReminderDays, sanitizeName, shuffled, timingSafeEqual, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
 import {
@@ -459,5 +459,15 @@ describe('small utils', () => {
     expect(fields.get('kw')).toBe('frieren');
     expect(fields.get('item:1')).toBe('2');
     expect(fields.get('legacy')).toBe('x');
+  });
+});
+
+describe('timingSafeEqual (shared-secret comparison)', () => {
+  it('matches only on exact equality', () => {
+    expect(timingSafeEqual('s3cret', 's3cret')).toBe(true);
+    expect(timingSafeEqual('s3cret', 's3crev')).toBe(false);
+    expect(timingSafeEqual('s3cret', 's3cre')).toBe(false);
+    expect(timingSafeEqual('', '')).toBe(true);
+    expect(timingSafeEqual('', 'x')).toBe(false);
   });
 });

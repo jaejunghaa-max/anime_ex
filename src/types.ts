@@ -15,7 +15,10 @@ export interface Env {
   JOB_BATCH?: string;
   REMINDERS_PER_TICK?: string;
   SFW_ONLY?: string;
+  /** Secret (`wrangler secret put`), not a var — see wrangler.toml. */
   MAL_CLIENT_ID?: string;
+  /** Secret gating /diag/search; the route 404s when unset. */
+  DIAG_KEY?: string;
 }
 
 export interface Cfg {
