@@ -129,6 +129,19 @@ export function driveExportText(env: Env, guild: GuildRow, fileId: string): Prom
     undefined, { raw: true });
 }
 
+/** Permanently delete a file this app created (drive.file scope covers it).
+ *  Used only by the abort teardown; 🧹 Finish leaves everything in place. */
+export async function driveDelete(env: Env, guild: GuildRow, fileId: string): Promise<void> {
+  try {
+    await gapi(env, guild, 'DELETE', `https://www.googleapis.com/drive/v3/files/${fileId}`);
+  } catch (e) {
+    // Already gone, or someone moved it out of our reach — either way there is
+    // nothing left to delete and the teardown must not stall on it.
+    if (e instanceof GoogleApiError && (e.status === 404 || e.status === 403)) return;
+    throw e;
+  }
+}
+
 /** anyone-with-link role; returns the permission id (stored for the Close flip). */
 export async function driveShareAnyone(
   env: Env, guild: GuildRow, fileId: string, role: 'writer' | 'reader',

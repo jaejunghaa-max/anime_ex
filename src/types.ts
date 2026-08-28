@@ -84,6 +84,8 @@ export interface EventRow {
   max_declines: number;
   /** The @everyone sign-up announcement, so Abort can clean it up. */
   announce_msg_id: string | null;
+  /** JSON array of the reveal-gallery message ids, so Abort can remove them. */
+  gallery_msg_ids: string;
   /** Manager-editable label/description of the built-in list-link item. */
   link_label: string | null;
   link_desc: string | null;

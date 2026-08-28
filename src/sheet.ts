@@ -43,6 +43,8 @@ export interface Layout {
   maxRecos: number;
   groupCol: number;
   santaCol: number;
+  /** Per-person Sorry😞 budget remaining — the decline count has no other home. */
+  declinesCol: number;
   /** First column of slot 1's block (Recommendation / Rec. Status / Rating). */
   recoCol: number;
   linkCol: number;
@@ -64,12 +66,13 @@ export const sheetSlots = (rows: Array<{ max_recos: number }>): number =>
 export function layoutOf(items: FormItem[], maxRecos = 1): Layout {
   const k = items.length;
   const n = Math.max(1, maxRecos);
-  const recoCol = FIXED + k + 3;
+  const recoCol = FIXED + k + 4;
   return {
     itemCount: k,
     maxRecos: n,
     groupCol: FIXED + k + 1,      // manager-editable loop membership
     santaCol: FIXED + k + 2,      // derived: next row within the group
+    declinesCol: FIXED + k + 3,   // derived: Sorry😞s the person has left
     recoCol,                      // slot 1 starts here; slot j at recoCol + (j-1)*PER_RECO
     linkCol: recoCol + 3,         // slot 1's Review Link
     lengthCol: recoCol + 4,       // slot 1's Review Length
@@ -95,7 +98,7 @@ export function headerRow(items: FormItem[], maxRecos = 1): string[] {
   return [
     'Row #', 'User ID 🔑', 'Display name', 'MAL/AniList',
     ...items.map((it) => (it.visible_to_recommender ? it.label : `${it.label} 🔒`)),
-    'Group', 'Secret Santa', ...recoHeaders,
+    'Group', 'Secret Santa', 'Sorry😞s left', ...recoHeaders,
   ];
 }
 
@@ -107,7 +110,7 @@ export function recoCell(r: Pick<RecoRow, 'title' | 'year'> | undefined): string
 
 /** Rec. Status cell — mirrors the approve/decline state machine. An empty slot
  *  stays empty: the decline count belongs to the person, not to a slot that
- *  holds no pick (it lives on 📊 View Status instead). */
+ *  holds no pick, so it lives in its own "Sorry😞s left" column. */
 export function recoStatusCell(
   r: Pick<RecoRow, 'status' | 'final_via'> | undefined,
 ): string {
@@ -136,8 +139,13 @@ export function scoreCell(r: Pick<RecoRow, 'score'> | undefined): string | numbe
   return r?.score ?? '';
 }
 
+/** How many Sorry😞s this participant may still spend. */
+export const declinesLeftCell = (
+  s: Pick<SignupRow, 'declines_used'>, event: Pick<EventRow, 'max_declines'>,
+): number => Math.max(0, event.max_declines - s.declines_used);
+
 /** The per-slot block of one participant's row: 5 cells per slot. */
-export function recoRowCells(s: SignupRow, recos: RecoRow[], slots: number): unknown[] {
+export function recoRowCells(recos: RecoRow[], slots: number): unknown[] {
   // Live picks fill the columns left to right — declined ones leave no gap and
   // no trace; unused slots stay blank.
   const live = activeRecos(recos).sort((a, b) => a.slot - b.slot);
@@ -157,7 +165,7 @@ export function recoRowCells(s: SignupRow, recos: RecoRow[], slots: number): unk
 
 function dataRow(
   s: SignupRow, idx: number, santa: SignupRow | undefined, items: FormItem[],
-  recos: RecoRow[], slots: number,
+  recos: RecoRow[], slots: number, event: Pick<EventRow, 'max_declines'>,
 ): unknown[] {
   const answers = answersOf(s);
   return [
@@ -168,7 +176,8 @@ function dataRow(
     ...items.map((it) => answers[String(it.item_id)] ?? ''),
     s.group_no,
     santa ? santa.display_name : '',
-    ...recoRowCells(s, recos, slots),
+    declinesLeftCell(s, event),
+    ...recoRowCells(recos, slots),
   ];
 }
 
@@ -194,7 +203,7 @@ export async function rewriteSheet(
     headerRow(items, slots),
     ...ordered.map((s, i) => dataRow(
       s, i, loops ? ordered[loops.santa[i]!] : undefined, items,
-      recosOf(recos, s.signup_id), slots,
+      recosOf(recos, s.signup_id), slots, event,
     )),
   ];
   // Write BEFORE clearing. These are two separate API calls with no
@@ -230,7 +239,7 @@ export async function writeSignupRow(
   await valuesUpdate(
     env, guild, event.sheet_id,
     a1(`A${index + 2}:${colLetter(layout.lastCol)}${index + 2}`),
-    [dataRow(s, index, loops ? ordered[loops.santa[index]!] : undefined, items, [], slots)],
+    [dataRow(s, index, loops ? ordered[loops.santa[index]!] : undefined, items, [], slots, event)],
   );
 }
 
@@ -268,6 +277,10 @@ export async function writeHeader(
         note: 'Auto-derived: the next row within the group recommends for this row. Reorder rows / edit Group to change assignments (until recommendations start); this block is overwritten by the bot.',
       },
       {
+        colIndex: layout.declinesCol - 1,
+        note: 'Auto-derived: how many times this person may still send a pick back. Written by the bot; never read as input.',
+      },
+      {
         colIndex: layout.recoCol - 1,
         note: 'Written by the bot during the recommending phase — the anime this row\'s Secret Santa picked for them (one block per recommendation slot). Never read as input.',
       },
@@ -303,11 +316,13 @@ export async function writeRecoRows(
     .bind(event.event_id).first<{ n: number }>();
   const slots = Math.min(MAX_PICKS, Math.max(1, widest?.n ?? 1));
   const layout = layoutOf(items, slots);
-  const from = colLetter(slotCol(layout, 1));
+  // Starts one column early: declines_used changes on every Sorry😞, so the
+  // budget cell has to travel with the block that a decline rewrites.
+  const from = colLetter(layout.declinesCol);
   const to = colLetter(slotCol(layout, slots) + PER_RECO - 1);
   await valuesBatchUpdate(env, guild, event.sheet_id, usable.map(({ row, recos }) => ({
     range: a1(`${from}${row.row_order! + 2}:${to}${row.row_order! + 2}`),
-    values: [recoRowCells(row, recos, slots)],
+    values: [[declinesLeftCell(row, event), ...recoRowCells(recos, slots)]],
   })));
 }
 

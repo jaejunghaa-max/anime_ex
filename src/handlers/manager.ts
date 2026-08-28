@@ -10,12 +10,12 @@ import {
   row, stringSelect, Style,
 } from '../discord';
 import {
-  activeRecos, finalRecos, getItems, countSignups, dbBatchChunked, loopContext, optionsOf,
+  activeRecos, getItems, countSignups, dbBatchChunked, loopContext, optionsOf,
   orderedSignups, pendingRecos, recosOf, transition,
 } from '../db';
 import { repostPanels } from '../panels';
 import { LINK_DESC_DEFAULT, LINK_LABEL_DEFAULT } from './signup';
-import { createSpreadsheet, isConnected, sheetUrl } from '../google';
+import { createSpreadsheet, driveDelete, isConnected, sheetUrl } from '../google';
 // Sheet writes before the recommendation phase carry no slots (none exist
 // yet); anything after it goes through rewriteSheetFromDb.
 import { rewriteSheet, rewriteSheetFromDb, writeHeader } from '../sheet';
@@ -1121,9 +1121,13 @@ export async function finishGo(c: HCtx): Promise<Response> {
 export function abort(c: HCtx): Response {
   if (!c.event) return stale(c, 'No event to abort.');
   return confirm(
-    '🛑 **Abort this event?** The bot\'s event data and any private threads are deleted, and any running launch/close/sync stops. ' +
-    '**Your Google Sheet and Docs stay in your Drive.** This cannot be undone.',
-    'ax:abort:go', 'Confirm — abort event',
+    '🛑 **Abort this event?** This deletes:\n' +
+    '• the bot\'s event data and every private thread\n' +
+    '• **the Google Sheet and all review Docs** — permanently, from your Drive\n' +
+    '• the reveal gallery, if it has already been posted\n' +
+    'Any running launch/close/sync stops. This cannot be undone — use **🧹 Finish** ' +
+    'instead if you want to keep the sheet and the reviews.',
+    'ax:abort:go', 'Confirm — abort and delete everything',
   );
 }
 
@@ -1147,26 +1151,34 @@ export async function abortGo(c: HCtx): Promise<Response> {
       .prepare('SELECT COUNT(*) AS n FROM signups WHERE event_id = ?1 AND thread_id IS NOT NULL')
       .bind(e.event_id).first<{ n: number }>();
     if ((hasThreads?.n ?? 0) === 0) {
-      // Nothing launched yet → instant teardown, no fan-out needed. Panels are
+      // Nothing launched yet → instant teardown, no fan-out needed. There are
+      // no review docs before launch, so the sheet is the only file to remove;
+      // the finish job handles the docs when threads exist. Panels are
       // re-posted (not edited) so the fresh IDLE panels sit at the bottom of
       // their channels.
+      if (e.sheet_id) {
+        await driveDelete(c.env, c.guild, e.sheet_id)
+          .catch((err) => console.error('sheet delete on abort failed', err));
+      }
       await c.env.DB.batch([
         c.env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(e.event_id),
         c.env.DB.prepare('DELETE FROM events WHERE event_id = ?1').bind(e.event_id),
       ]);
       await repostPanels(c.env, c.cfg, c.guild.guild_id);
       await editOriginal(c.env, c.i.token, {
-        content: '🛑 **Event aborted** — fresh panels posted. The sheet (if created) stays in your Drive.',
+        content: '🛑 **Event aborted** — the sheet (if one was created) is deleted and fresh panels are posted.',
         components: [],
       });
       return;
     }
     // Threads exist → batched teardown via the finish job (§13.1: fan-out
-    // never runs in handlers). Panels reset when the last thread is gone.
-    await enqueueJob(c, e.event_id, 'finish');
+    // never runs in handlers). `files` tells it this is an abort, so the
+    // gallery, the sheet and every review doc go too. Panels reset when the
+    // last thread is gone.
+    await enqueueJob(c, e.event_id, 'finish', { files: true });
     await repaint(c);
     await editOriginal(c.env, c.i.token, {
-      content: '🛑 **Aborting** — private threads are being removed (batched); both panels reset when done.',
+      content: '🛑 **Aborting** — review docs, the sheet, the gallery and every private thread are being removed (batched); both panels reset when done.',
       components: [],
     });
   });

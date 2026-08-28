@@ -13,7 +13,7 @@
 
 import type { EventRow, FormItem, RecoRow, SignupRow } from './types';
 import { btn, embed, linkBtn, row, Style } from './discord';
-import { activeRecos, answersOf, finalRecos, pendingRecos, picksLeft } from './db';
+import { activeRecos, answersOf, finalRecos, picksLeft } from './db';
 import { truncate, ts } from './util';
 
 function visibleAnswerLines(giftee: SignupRow, items: FormItem[]): string | null {

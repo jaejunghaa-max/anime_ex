@@ -5,7 +5,8 @@ import {
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
 import {
-  a1, colLetter, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots, slotCol,
+  a1, colLetter, declinesLeftCell, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots,
+  slotCol,
 } from '../src/sheet';
 import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
 import { animeCard, assignmentHeader, revealCard, statusPanel } from '../src/cards';
@@ -469,5 +470,32 @@ describe('timingSafeEqual (shared-secret comparison)', () => {
     expect(timingSafeEqual('s3cret', 's3cre')).toBe(false);
     expect(timingSafeEqual('', '')).toBe(true);
     expect(timingSafeEqual('', 'x')).toBe(false);
+  });
+});
+
+describe('the Sorry😞s-left column (the decline count has no other home)', () => {
+  const items: FormItem[] = [{
+    item_id: 1, event_id: 1, position: 1, label: 'Genre',
+    type: 'FIB', description: null, options_json: null, visible_to_recommender: 1,
+  }];
+
+  it('sits after Secret Santa, so Validate reads the same Group column as before', () => {
+    const layout = layoutOf(items, 2);
+    // A Row#, B User ID, C Display name, D MAL/AniList, E Genre, F Group, G Santa …
+    expect(layout.groupCol).toBe(6);
+    expect(layout.santaCol).toBe(7);
+    expect(layout.declinesCol).toBe(8);
+    expect(layout.recoCol).toBe(9);
+  });
+
+  it('is headed and positioned to match the data row', () => {
+    const header = headerRow(items, 1);
+    expect(header[layoutOf(items, 1).declinesCol - 1]).toBe('Sorry😞s left');
+  });
+
+  it('reports the remaining budget and never goes negative', () => {
+    expect(declinesLeftCell({ declines_used: 0 }, { max_declines: 2 })).toBe(2);
+    expect(declinesLeftCell({ declines_used: 2 }, { max_declines: 2 })).toBe(0);
+    expect(declinesLeftCell({ declines_used: 5 }, { max_declines: 2 })).toBe(0);
   });
 });

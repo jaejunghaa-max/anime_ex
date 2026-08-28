@@ -234,18 +234,21 @@ Everything happens on the two pinned panels:
 6. During RUNNING: wrote-detection every 30 minutes and on every **🔄 Refresh**
    click (chars written beyond each doc's template; the sheet — linked from the
    panel at all times — carries a **Rating** + **Review Link** + **Review
-   Length** trio per pick), progress panel, scheduled reminders (thread ping,
-   optional DM mirror), **Remind Now** for laggards, **⏰ Auto-stop** (ON closes
-   reviews by itself at the review deadline), rating out of 10 until Close.
+   Length** trio per pick), progress panel counting participants started and
+   reviews under way, **Remind Now** for laggards (thread ping, optional DM
+   mirror — the only reminder the bot sends; nothing is scheduled),
+   **⏰ Auto-stop** (ON closes reviews by itself at the review deadline),
+   rating out of 10 until Close.
 7. **Close Reviews**: one confirm — final status sync, all docs flip to
    anyone-with-link **viewer** *before* any reveal link is posted, then reveal
-   cards — "your Secret Santa was X. They picked the anime for you." with a
+   cards — "X was your Secret Santa. They picked the anime for you." with a
    bullet per anime, then what the giftee made of your picks, each with its own
    **(review)** link — plus the public gallery (always posted): one
    "🎁 X was the Secret Santa of Y" header per pair and a bullet per anime.
 8. **Finish**: deletes threads and the bot's event data, then re-posts fresh
-   IDLE panels at the bottom of both channels (Abort does the same). **The
-   sheet and docs stay in the manager's Drive** — nothing to export.
+   IDLE panels at the bottom of both channels. **The sheet and docs stay in the
+   manager's Drive** — nothing to export. (Abort is the opposite: it deletes
+   them.)
 
 ## Operational notes
 
@@ -262,9 +265,11 @@ Everything happens on the two pinned panels:
 - **Wrong-thread clicks:** thread-card buttons carry the owner's user id
   (`ax:reco*:{uid}`), so a moderator clicking inside someone else's private
   thread is told whose buttons they are instead of acting on their own row.
-- **🛑 Abort:** every non-IDLE state has a red Abort button — it cancels any
-  in-flight job, purges unsent reminders, deletes threads (batched) and resets
-  both panels to IDLE. The sheet and docs always stay in the manager's Drive.
+- **🛑 Abort:** every non-IDLE state has a red Abort button, and it is a full
+  teardown — it cancels any in-flight job, purges unsent reminders, deletes the
+  threads and the reveal gallery (batched), **permanently deletes the sheet and
+  every review doc from the manager's Drive**, and resets both panels to IDLE.
+  The confirmation says so; **🧹 Finish** is the variant that keeps the files.
 - **Stalls self-heal:** after 5 consecutive failing ticks the manager panel
   shows the job's last error (e.g. the Google reconnect prompt); the dispatcher
   retries every minute, so fixing the cause is sufficient.

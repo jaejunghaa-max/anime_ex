@@ -12,8 +12,8 @@ import {
 import { activeRecos, getItems, loadRecos, orderedSignups, recosOf, transition } from './db';
 import { animeCard, assignmentHeader, ratingLine, revealCard, statusPanel } from './cards';
 import {
-  createDoc, docUrl, driveExportText, driveFileMeta, driveFlipAnyoneToReader, driveShareAnyone,
-  GoogleApiError, GoogleAuthError, writeDocTemplate,
+  createDoc, docUrl, driveDelete, driveExportText, driveFileMeta, driveFlipAnyoneToReader,
+  driveShareAnyone, GoogleApiError, GoogleAuthError, writeDocTemplate,
 } from './google';
 import { repaintPanels, repostPanels } from './panels';
 import { rewriteSheetFromDb, writeRecoRows } from './sheet';
@@ -34,6 +34,16 @@ async function healSheet(env: Env, guild: GuildRow, event: EventRow): Promise<vo
 // template_chars, and the clause permanently false-negatived anyone whose
 // last edit fell within a minute of doc creation.
 const WROTE_MIN_CHARS = 20;
+
+/** Message ids stored as a JSON array; a malformed value is simply "none". */
+function parseIdList(json: string): string[] {
+  try {
+    const v = JSON.parse(json || '[]') as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
 
 // ------------------------------------------------------------- dispatcher
 
@@ -280,7 +290,7 @@ async function launchTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
 async function postGallery(
   env: Env, guild: GuildRow, event: EventRow, all: SignupRow[],
   recos: Map<number, RecoRow[]>,
-): Promise<void> {
+): Promise<string[]> {
   // One section per loop (§6.4): "**Loop 1** (10)" then one line per member in
   // block order; single-group events get one untitled section.
   const loops = buildLoops(all.map((s) => s.group_no));
@@ -307,12 +317,14 @@ async function postGallery(
   let batch: string[] = [];
   let used = 0;
   let first = true;
+  const posted: string[] = [];
   const flush = async () => {
     if (!batch.length) return;
-    await postMessage(env, guild.participant_channel_id!, {
+    const msg = await postMessage(env, guild.participant_channel_id!, {
       content: first ? `🎉 **${event.topic}** — the full loop, revealed:` : '',
       embeds: batch.map((d) => embed({ description: d })),
     });
+    posted.push(msg.id);
     first = false;
     batch = [];
     used = 0;
@@ -323,6 +335,7 @@ async function postGallery(
     used += d.length;
   }
   await flush();
+  return posted;
 }
 
 async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
@@ -389,9 +402,12 @@ async function closeTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, j
 
   // Final unit — optional gallery, then complete (§7.6).
   if (payload.gallery && !event.gallery_posted && n > 0) {
-    await postGallery(env, guild, event, all, recos);
-    await env.DB.prepare('UPDATE events SET gallery_posted = 1, updated_at = ?1 WHERE event_id = ?2')
-      .bind(now(), event.event_id).run();
+    // Remember the ids: an abort after the reveal has to be able to take the
+    // gallery back down, and nothing else records where it went.
+    const posted = await postGallery(env, guild, event, all, recos);
+    await env.DB.prepare(
+      'UPDATE events SET gallery_posted = 1, gallery_msg_ids = ?1, updated_at = ?2 WHERE event_id = ?3',
+    ).bind(JSON.stringify(posted), now(), event.event_id).run();
   }
   await transition(env, event.event_id, 'CLOSING', 'REVEALED');
   await markDone(env, job);
@@ -499,7 +515,49 @@ const countStarted = async (env: Env, eventId: number): Promise<number> => {
 
 // ----------------------------------------------------------------- finish
 
-async function finishTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, _job: JobRow): Promise<void> {
+async function finishTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, job: JobRow): Promise<void> {
+  // Abort passes {"files": true}: it removes what the event put OUTSIDE the
+  // bot too — the reveal gallery in the participant channel, and the Google
+  // sheet and review docs. 🧹 Finish leaves all of that in place, because
+  // there the event ended normally and the artifacts are the whole point.
+  const payload = JSON.parse(job.payload_json || '{}') as { files?: boolean };
+
+  if (payload.files) {
+    // Docs first, batched — one subrequest each, and there is one per anime.
+    const docs = await env.DB
+      .prepare('SELECT reco_id, doc_id FROM recos WHERE event_id = ?1 AND doc_id IS NOT NULL LIMIT ?2')
+      .bind(event.event_id, cfg.jobBatch).all<{ reco_id: number; doc_id: string }>();
+    if (docs.results.length > 0) {
+      for (const r of docs.results) {
+        await driveDelete(env, guild, r.doc_id);
+        // Clearing doc_id is the progress marker — a re-entered tick skips it.
+        await env.DB.prepare(
+          'UPDATE recos SET doc_id = NULL, doc_url = NULL, perm_id = NULL WHERE reco_id = ?1',
+        ).bind(r.reco_id).run();
+      }
+      await repaintPanels(env, cfg, guild.guild_id);
+      return;
+    }
+    if (event.sheet_id) {
+      await driveDelete(env, guild, event.sheet_id);
+      await env.DB.prepare('UPDATE events SET sheet_id = NULL, sheet_gid = NULL WHERE event_id = ?1')
+        .bind(event.event_id).run();
+      event.sheet_id = null;
+    }
+    // The gallery belongs to the aborted event; take it down with it.
+    const galleryIds = parseIdList(event.gallery_msg_ids);
+    if (galleryIds.length > 0 && guild.participant_channel_id) {
+      for (const id of galleryIds) {
+        await deleteMessage(env, guild.participant_channel_id, id).catch((e) => {
+          if (!(e instanceof DiscordApiError && e.status === 404)) throw e;
+        });
+      }
+      await env.DB.prepare("UPDATE events SET gallery_msg_ids = '[]' WHERE event_id = ?1")
+        .bind(event.event_id).run();
+      event.gallery_msg_ids = '[]';
+    }
+  }
+
   const withThreads = await env.DB
     .prepare('SELECT signup_id, thread_id FROM signups WHERE event_id = ?1 AND thread_id IS NOT NULL LIMIT ?2')
     .bind(event.event_id, cfg.jobBatch).all<{ signup_id: number; thread_id: string }>();
@@ -516,9 +574,10 @@ async function finishTick(env: Env, cfg: Cfg, guild: GuildRow, event: EventRow, 
   }
 
   // All threads gone → wipe the event. Cascades take signups/items/jobs/
-  // reminders (this job included); drafts have no FK, wipe explicitly.
-  // Sheet and docs stay in the manager's Drive (§5.6). The IDLE panels are
-  // re-POSTED (old ones deleted) so they land at the bottom of their channels.
+  // reminders (this job included); drafts have no FK, wipe explicitly. Sheet
+  // and docs stay in the manager's Drive unless this was an abort (§5.6). The
+  // IDLE panels are re-POSTED (old ones deleted) so they land at the bottom of
+  // their channels.
   await env.DB.batch([
     env.DB.prepare('DELETE FROM signup_drafts WHERE event_id = ?1').bind(event.event_id),
     env.DB.prepare('DELETE FROM events WHERE event_id = ?1').bind(event.event_id),

@@ -69,29 +69,31 @@ When the manager starts the recommendation phase, a private thread named
 `🎁 {your name}` appears with your **mission card** — who you're the Secret
 Santa of, with their info as a simple list:
 
-> **🎯 You are the Secret Santa of rabbit**
+> **🎯 Your missions**
+>
+> **1. You are the Secret Santa of rabbit**
 > 🎨 **Theme:** Nostalgia
 > Study **rabbit**'s taste. Recommend **at most 3** anime they'll love — and
-> that fit the theme.
+> that fit the theme by {deadline}.
 > • **list:** https://myanimelist.net/profile/rabbit
 > • **favorite genre:** mecha
 >
 > 🎯 **Your recommendations** (1 approved / 3 at most)
 > • Sousou no Frieren (2023) — declined 😞
 > • Kaiba (2008) — approved 😊
-> ⏰ **Recommend by** {deadline}
-> They can send a pick back with Sorry😞. *They don't know it's you.* 🤫
+> *They don't know it's you — identities stay secret until the reveal.* 🤫
 >
->
-> 🎁 **Anime you approved**
-> **1.** ✅ Love Live! (2013) · TV · 13 episodes · MAL
-> Sorry😞s left: **1**
+> **2. Approve anime you want to review**
+> 🎁 **Recommendations you got** (1 Sorry😞 left)
+> • Love Live! (2013) — approved 😊
+> • Dandadan (2024) — waiting for your reply ⏳
 >
 > `[🎯 Recommend an anime]` `[I'll change my mind😞]`
 
-Mission and approvals live in the **same** panel — one embed, your whole
-status view, updating itself as things happen. (You never see how many declines *they* have left — pick with your
-heart.)
+Both missions live in the **same** panel — one embed, your whole status view,
+updating itself as things happen. You answer each pick on its own card, which
+arrives in the thread as it is sent. (You never see how many declines *they*
+have left — pick with your heart.)
 
 Press **🎯 Recommend an anime**, type a title keyword (English and Japanese
 both work — "frieren", "Sousou no Frieren" and 「葬送のフリーレン」 all find
@@ -206,8 +208,6 @@ anime:
 - The panel shows the live count and links the sheet in its body (as every
   later state does — `Sheet: https://…`); **🔄 Refresh** updates the count
   instantly instead of waiting out the 1-minute throttle.
-- **📋 View Sign-ups** — a private list of the most recent sign-ups plus the
-  running total, without leaving Discord for the sheet.
 - **⏰ Auto-stop** — a toggle here (and again during Recommending and Running):
   ON closes sign-ups automatically at the deadline.
 - If the deadline passes with auto-stop off, the participant panel shows
@@ -250,10 +250,9 @@ accepted out of everything people asked for.
 
 - **🔄 Refresh** — queues a repaint; the panel and sheet update within a
   minute or two.
-- **📊 View Status** — the per-person detail privately in Discord: who was
-  picked what, ✅/⏳/😞 per pick, each person's maximum, and how many Sorry😞s
-  they have spent. The same picture (minus the decline counts) lives in the
-  sheet's **Recommendation / Rec. Status** columns.
+  The per-person detail — who was picked what, ✅/⏳/😞 per pick, and how many
+  Sorry😞s each person has left — lives in the sheet's **Sorry😞s left** and
+  **Recommendation / Rec. Status** columns.
 - **⏰ Auto-stop** — ON locks every ⏳ pending pick at the recommendation
   deadline, so the back-and-forth ends on time. Launching stays your call.
 - **📣 Remind Now** — nudges exactly the people who owe an action: Santas who
@@ -262,11 +261,12 @@ accepted out of everything people asked for.
 - **↩ Back to Matching** — the undo: wipes **all** picks, approvals and
   declines, and unlocks the assignment for regrouping. Threads stay and are
   reused; old thread cards become stale (their buttons politely refuse).
-- **🚀 Launch** — set the review deadline, timezone, reminder days
-  (default `7,3,1`), and optional DM mirroring; confirm. Launch only refuses
-  while someone **has no anime at all**. Picks that are still ⏳ awaiting a
-  reply get locked in by the launch itself — the confirmation warns you first
-  with **‼️The pending picks will be locked**.
+- **🚀 Launch** — set the review deadline, timezone and optional DM mirroring;
+  confirm. Launch refuses while someone **has no anime at all**, and says so
+  before opening the deadline form. Picks that are still ⏳ awaiting a reply
+  get locked in by the launch itself — the confirmation warns you first with
+  **‼️The pending picks will be locked**. There are no scheduled reminders:
+  nudging is yours, via **📣 Remind Now**.
 
 **LAUNCHING** — the bot creates **one review doc per accepted anime** and then
 posts each participant's assignment (a header message plus one panel per
@@ -280,6 +280,7 @@ Redeploys or crashes lose nothing — it resumes where it left off.
 - **🔄 Refresh** — queues a status refresh; the panel and sheet update within
   a minute or two. Status also refreshes on its own every 30 minutes.
 - **📣 Remind Now** — immediate nudge to everyone who hasn't started writing.
+  This is the only reminder the bot sends; nothing goes out on a schedule.
 - **⏰ Auto-stop** — ON closes reviews by itself at the review deadline: docs
   flip read-only, reveals and the gallery go out, exactly as if you had pressed
   🏁 Close Reviews. OFF leaves it to you.
@@ -295,9 +296,12 @@ data, then **re-posts fresh panels at the bottom of both channels** (the old
 pinned ones are removed, so nobody has to scroll up to find them). **Your
 Google Sheet and Docs stay in your Drive.** A new event can start immediately.
 
-**🛑 Abort** — available in every state as the red escape hatch. It cancels
-any stuck job, removes threads, wipes the bot's event data, and re-posts
-fresh panels at the bottom of both channels — Drive files are never touched.
+**🛑 Abort** — available in every state as the red escape hatch, and it is a
+full teardown. It cancels any stuck job, removes the threads and the reveal
+gallery, **permanently deletes the Google Sheet and every review Doc from your
+Drive**, wipes the bot's event data, and re-posts fresh panels at the bottom of
+both channels. The confirmation spells this out. If you want to end an event
+but keep the sheet and the reviews, use **🧹 Finish** instead.
 Use it whenever an event is wedged; it cannot be undone.
 
 ### The spreadsheet
@@ -309,11 +313,12 @@ automatically if it drifts.
 |---|---|---|
 | Row # | bot | display only |
 | User ID 🔑 | bot | immutable key — **never edit** |
-| Username | bot | the participant |
+| Display name | bot | the participant |
 | MAL/AniList | bot | their list link (the built-in signup item) |
 | *your custom items* | bot | answers (🔒 marks hidden ones) |
 | **Group** | **you** (during Matching only) | loop membership — positive integer, blank = 1 |
 | Secret Santa | bot | derived from row order (the next row picks for this one) — never edit |
+| Sorry😞s left | bot | how many more times that person may send a pick back |
 | Recommendation *k* | bot | their *k*-th live pick (declined ones don't take a column) |
 | Rec. Status *k* | bot | `⏳ awaiting reply` / `✅ accepted` / `⏩ locked at launch` (blank if that slot holds no pick) |
 | Rating *k* | bot | the participant's ⭐/10 for that anime |

@@ -201,11 +201,11 @@ export async function signupModalA(c: HCtx): Promise<Response> {
   }
   answers[LINK_KEY] = link;
   await saveDraft(c, e.event_id, { step: 'A_DONE', partial_answers_json: JSON.stringify(answers) });
-  return reply(nextStep(e, items, answers));
+  return reply(nextStep(items, answers));
 }
 
 /** After step 1 is stored: the Continue (2/2) prompt, or straight to summary. */
-function nextStep(e: EventRow, items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
+function nextStep(items: FormItem[], answers: Record<string, string>): Record<string, unknown> {
   if (itemsB(items).length > 0) {
     return {
       content: `🔗 List saved — one more step for the remaining questions.`,
@@ -216,7 +216,7 @@ function nextStep(e: EventRow, items: FormItem[], answers: Record<string, string
       )],
     };
   }
-  return summaryCard(e, items, answers);
+  return summaryCard(items, answers);
 }
 
 /** [⚠ Proceed anyway] — keep the non-MAL/AniList link exactly as typed. */
@@ -229,7 +229,7 @@ export async function signupForce(c: HCtx): Promise<Response> {
     return respond.update({ content: '⏳ This wizard expired — press **📝 Sign Up/Edit** to start again.', embeds: [], components: [] });
   }
   const items = await getItems(c.env, e.event_id);
-  return respond.update(nextStep(e, items, answers));
+  return respond.update(nextStep(items, answers));
 }
 
 /** [Continue (2/2)] → Modal B prefilled. */
@@ -263,7 +263,7 @@ export async function signupModalB(c: HCtx): Promise<Response> {
     ...collectAnswers(itemsB(items), modalFields(c.i.data?.components)),
   };
   await saveDraft(c, e.event_id, { ...draft, step: 'B_DONE', partial_answers_json: JSON.stringify(answers) });
-  return respond.update(summaryCard(e, items, answers));
+  return respond.update(summaryCard(items, answers));
 }
 
 /** [✏ Fix my sign-up / Back to step 1] → Modal A with previous values prefilled. */
@@ -295,7 +295,7 @@ const picksOf = (answers: Record<string, string>, fallback = 1): number => {
 };
 
 function summaryCard(
-  e: EventRow, items: FormItem[], answers: Record<string, string>,
+  items: FormItem[], answers: Record<string, string>,
 ): Record<string, unknown> {
   const link = answers[LINK_KEY] ?? '—';
   const offSite = link !== '—' && !normalizeListUrl(link) ? ' ⚠ *(not a MAL/AniList link)*' : '';

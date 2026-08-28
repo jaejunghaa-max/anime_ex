@@ -25,10 +25,12 @@ export interface PanelStats {
    *  everyone asked for (the sum of each participant's own maximum). */
   picksAccepted: number;
   picksWanted: number;
-  /** Review docs, counted per ANIME (v6): created, flipped read-only, total. */
+  /** Review docs, counted per ANIME (v6): created, flipped read-only, total,
+   *  and how many have content in them. */
   docsMade: number;
   docsFlipped: number;
   docsTotal: number;
+  reviewsStarted: number;
   /** Loop sizes in block order, as of the last adoption into D1 (rev. 3). */
   groupSizes: number[];
   lastSync: number | null;
@@ -41,6 +43,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
       count: 0, launched: 0, revealed: 0, started: 0, threadsLeft: 0,
       prepared: 0, recoAccepted: 0, recoPending: 0, recoNothing: 0,
       picksAccepted: 0, picksWanted: 0, docsMade: 0, docsFlipped: 0, docsTotal: 0,
+      reviewsStarted: 0,
       groupSizes: [], lastSync: null, activeJob: null,
     };
   }
@@ -71,9 +74,10 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   const docAgg = await env.DB.prepare(
     `SELECT COUNT(*) AS total,
             COALESCE(SUM(CASE WHEN doc_id IS NOT NULL THEN 1 ELSE 0 END), 0) AS made,
-            COALESCE(SUM(doc_readonly), 0) AS flipped
+            COALESCE(SUM(doc_readonly), 0) AS flipped,
+            COALESCE(SUM(wrote), 0) AS started
      FROM recos WHERE event_id = ?1 AND status != 'DECLINED'`,
-  ).bind(event.event_id).first<{ total: number; made: number; flipped: number }>();
+  ).bind(event.event_id).first<{ total: number; made: number; flipped: number; started: number }>();
   const activeJob = await env.DB
     .prepare('SELECT * FROM jobs WHERE event_id = ?1 AND done_at IS NULL ORDER BY id LIMIT 1')
     .bind(event.event_id).first<JobRow>();
@@ -98,6 +102,7 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
     docsMade: docAgg?.made ?? 0,
     docsFlipped: docAgg?.flipped ?? 0,
     docsTotal: docAgg?.total ?? 0,
+    reviewsStarted: docAgg?.started ?? 0,
     groupSizes: groups.results.map((r) => r.c),
     lastSync: lastSync?.done_at ?? null,
     activeJob,
@@ -341,7 +346,8 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
-            `**${stats.started} / ${stats.count}** started writing · ${sync}\n${googleLine(guild)}` +
+            `**${stats.started} / ${stats.count}** participants started writing · ` +
+            `**${stats.reviewsStarted} / ${stats.docsTotal}** reviews are being written\n${sync}\n${googleLine(guild)}` +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(
