@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildLoops, chunkLines, dealSizes, epochToZoned, isValidTz, loopsPhrase, normalizeListUrl,
-  parseReminderDays, sanitizeName, shuffled, timingSafeEqual, zonedToEpoch,
+  sanitizeName, shuffled, timingSafeEqual, zonedToEpoch,
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
 import {
@@ -302,17 +302,35 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     components: Array<{ components: Array<{ custom_id?: string; label?: string }> }>;
   };
 
-  it('splits mission and own-anime into two embeds so neither truncates the other', () => {
+  it('is one panel with two numbered missions', () => {
     const panel = statusPanel(event, me, giftee, [], [], [
       reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
     ]) as Panel;
-    expect(panel.embeds).toHaveLength(2);
-    expect(panel.embeds[0]!.title).toContain('Secret Santa of B');
-    expect(panel.embeds[1]!.description).toContain('Anime you approved');
-    expect(panel.embeds[1]!.description).toContain('Kaiba');
+    expect(panel.embeds).toHaveLength(1);
+    const d = panel.embeds[0]!.description;
+    expect(panel.embeds[0]!.title).toBe('🎯 Your missions');
+    expect(d).toContain('**1. You are the Secret Santa of B**');
+    expect(d).toContain('**2. Approve anime you want to review**');
+    expect(d).toContain('Recommendations you got');
+    // Sections are separated by a blank line.
+    expect(d).toContain('\n\n**2. Approve anime you want to review**');
   });
 
-  it('long visible answers can no longer push the reader\'s own section past the cap', () => {
+  it('bullets received picks with their status, declines included', () => {
+    const panel = statusPanel(event, me, giftee, [], [], [
+      reco({ reco_id: 9, signup_id: 1, title: 'Sousou no Frieren', status: 'DECLINED' }),
+      reco({ reco_id: 10, signup_id: 1, slot: 2, title: 'Kaiba', status: 'PENDING' }),
+      reco({ reco_id: 11, signup_id: 1, slot: 3, title: 'Dandadan' }),
+    ]) as Panel;
+    const d = panel.embeds[0]!.description;
+    expect(d).toContain('• Sousou no Frieren (2020) — declined 😞');
+    expect(d).toContain('• Kaiba (2020) — waiting for your reply ⏳');
+    expect(d).toContain('• Dandadan (2020) — approved 😊');
+    // max_declines is 2 and none are spent yet.
+    expect(d).toContain('(2 Sorry😞s left)');
+  });
+
+  it('trims the giftee answers, never the reader own section, when over the cap', () => {
     const items: FormItem[] = Array.from({ length: 8 }, (_, i) => ({
       item_id: i + 1, event_id: 1, position: i + 1, label: `Q${i + 1}`,
       type: 'FIB', description: null, options_json: null, visible_to_recommender: 1,
@@ -325,25 +343,16 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     const panel = statusPanel(event, me, chatty, items, [], [
       reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
     ]) as Panel;
-    // The mission embed is the one that overflows; the reader's half is intact.
-    expect(panel.embeds[0]!.description.length).toBeLessThanOrEqual(4096);
-    expect(panel.embeds[1]!.description).toContain('Kaiba');
-    expect(panel.embeds[1]!.description).toContain('Sorry😞s left');
+    const d = panel.embeds[0]!.description;
+    expect(d.length).toBeLessThanOrEqual(4096);
+    expect(d).toContain('**2. Approve anime you want to review**');
+    expect(d).toContain('Kaiba');
+    expect(d).toContain('Sorry😞s left');
   });
 
-  it('offers an accept button per pending pick, so a lost card never strands the giftee', () => {
+  it('carries no per-pick accept buttons — the pick card is where you answer', () => {
     const panel = statusPanel(event, me, giftee, [], [], [
       reco({ reco_id: 9, signup_id: 1, title: 'Kaiba', status: 'PENDING' }),
-      reco({ reco_id: 10, signup_id: 1, slot: 2, title: 'Dandadan', status: 'PENDING' }),
-    ]) as Panel;
-    const ids = panel.components.flatMap((r) => r.components.map((b) => b.custom_id));
-    expect(ids).toContain('ax:reco_ok:u1:9');
-    expect(ids).toContain('ax:reco_ok:u1:10');
-  });
-
-  it('shows no accept buttons when nothing is pending', () => {
-    const panel = statusPanel(event, me, giftee, [], [], [
-      reco({ reco_id: 9, signup_id: 1, title: 'Kaiba' }),
     ]) as Panel;
     const ids = panel.components.flatMap((r) => r.components.map((b) => b.custom_id));
     expect(ids.some((id) => id?.startsWith('ax:reco_ok:'))).toBe(false);
@@ -396,7 +405,7 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     const card = revealCard(me, signup({ signup_id: 3, user_id: 'u3', display_name: 'C' }),
       giftee, mine, theirs) as { embeds: Array<{ description: string }> };
     const d = card.embeds[0]!.description;
-    expect(d).toContain('Your Secret Santa was **C**');
+    expect(d).toContain('**C** (<@u3>) was your Secret Santa.');
     expect(d).toContain('• **Frieren (2020)**');
     expect(d).toContain('appreciated your picks');
     expect(d).toContain('• B rated **Kaiba (2020)** ⭐ 8 ([review](https://d/3))');
@@ -427,16 +436,7 @@ describe('MAL/AniList link validation (v3 built-in signup item)', () => {
   });
 });
 
-describe('small utils', () => {
-  it('parseReminderDays', () => {
-    expect(parseReminderDays('7,3,1')).toEqual([7, 3, 1]);
-    expect(parseReminderDays('1, 3,3')).toEqual([3, 1]);
-    expect(parseReminderDays('')).toEqual([]);
-    expect(parseReminderDays('0')).toBeNull();
-    expect(parseReminderDays('x')).toBeNull();
-    expect(parseReminderDays('90')).toBeNull();
-  });
-  it('sanitizeName strips control chars and caps length', () => {
+describe('small utils', () => {  it('sanitizeName strips control chars and caps length', () => {
     expect(sanitizeName('a bc')).toBe('abc');
     expect(sanitizeName('  spaced   out  ')).toBe('spaced out');
     expect(sanitizeName('x'.repeat(100))).toHaveLength(60);

@@ -16,7 +16,7 @@ import * as su from './signup';
 const PARTICIPANT_ACTIONS = new Set([
   'signup', 'signup_again', 'signup_cont', 'signup_confirm', 'signup_restart', 'signup_force',
   'edit_signup', 'withdraw', 'score', 'cancel',
-  'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no', 'reco_me',
+  'reco', 'reco_pick', 'reco_again', 'reco_send', 'reco_ok', 'reco_no',
   'reco_undo', 'reco_undo_pick',
 ]);
 const PARTICIPANT_MODALS = new Set(['signup_a', 'signup_b', 'score', 'reco_kw']);
@@ -107,7 +107,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'open': return arg === 'go' ? mgr.openSignupsGo(c) : mgr.openSignups(c);
     case 'discard': return arg === 'go' ? mgr.discardGo(c) : mgr.discard(c);
     // SIGNUP_OPEN / MATCHING (manager)
-    case 'view_signups': return mgr.viewSignups(c);
     case 'stop': return arg === 'go' ? mgr.stopSignupsGo(c) : mgr.stopSignups(c);
     case 'reopen': return arg === 'go' ? mgr.reopenSignupsGo(c) : mgr.reopenSignups(c);
     case 'shuffle': return mgr.shuffle(c);
@@ -117,7 +116,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     case 'rm_restore': return mgr.removalRestore(c, arg);
     case 'reco_start': return arg === 'go' ? mgr.recoStartGo(c) : mgr.recoStartModal(c);
     // RECOMMENDING (manager)
-    case 'reco_view': return mgr.recoView(c);
     case 'back_matching': return arg === 'go' ? mgr.backMatchingGo(c) : mgr.backMatching(c);
     case 'launch': return arg === 'go' ? mgr.launchGo(c) : mgr.launchModal(c);
     // RUNNING / RECOMMENDING (manager)
@@ -152,7 +150,6 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     // control". Nothing current emits these.
     case 'view_event': return mgr.refreshStatus(c);      // pre-3.1
     case 'edit_signup': return su.signupStart(c);        // pre-3.2
-    case 'reco_me': return reco.recoStatusMe(c);         // pre-3.2
     default:
       return stale(c, 'This control is from an older version of the panel.');
   }

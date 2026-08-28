@@ -252,21 +252,6 @@ export function shortRef(): string {
   return randomHex(3);
 }
 
-/** Parse "7,3,1" → sorted-desc unique ints in [1, 60]; null if anything invalid. */
-export function parseReminderDays(input: string): number[] | null {
-  const t = input.trim();
-  if (t === '') return [];
-  const parts = t.split(/[,\s]+/).filter(Boolean);
-  const days = new Set<number>();
-  for (const p of parts) {
-    if (!/^\d+$/.test(p)) return null;
-    const d = parseInt(p, 10);
-    if (d < 1 || d > 60) return null;
-    days.add(d);
-  }
-  return [...days].sort((a, b) => b - a);
-}
-
 // ----------------------------------------------------------- loop math
 // The ordered row list + the Group column ARE the assignment (spec §1):
 // santa(i) = the next row within i's group, wrapping at the block boundary.

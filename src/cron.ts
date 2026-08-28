@@ -264,9 +264,9 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
       }
       components = [row(...buttons)];
     } else {
-      // RUNNING: manual nudges target laggards; if they started since the
-      // click, skip silently.
-      if (r.kind === 'manual' && r.wrote) {
+      // RUNNING: nudges target laggards; if they started since the click, skip
+      // silently.
+      if (r.wrote) {
         done.push(r.id);
         continue;
       }
@@ -274,12 +274,7 @@ async function deliverReminders(env: Env, cfg: Cfg): Promise<number> {
       const titles = live.map((x: RecoRow) => x.title ?? '?');
       const anime = titles.length ? titles.join(', ') : 'your assigned anime';
       const deadline = r.review_deadline ?? r.due_at;
-      const daysLeft = Math.max(1, Math.round((deadline - r.due_at) / 86400));
-      text = r.kind === 'manual'
-        ? `📣 A nudge from your event manager — **${anime}** is still waiting for your review!`
-        : r.wrote
-          ? `⏰ **${daysLeft} day(s) left** — don't forget to finish your review of **${anime}**.`
-          : `⏰ **${daysLeft} day(s) left** for **${anime}** — your review doc is still empty.`;
+      text = `📣 A nudge from your event manager — **${anime}** is still waiting for your review!`;
       deadlineLine = `\nDeadline: ${ts(deadline)} (${ts(deadline, 'R')})`;
       // One doc per anime (v6) — one button each, named when there are several.
       const docs = live.filter((x) => x.doc_url);

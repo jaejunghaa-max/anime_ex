@@ -216,13 +216,12 @@ export function renderManagerPanel(
           title: `📨 Sign-ups open — ${e.topic}`,
           description:
             sheetTop(e) +
+            `**${stats.count}** signed up\n` +
             `**Deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})` +
-            `${e.auto_stop ? ' · auto-stop **on**' : ''}\n` +
-            `**${stats.count}** signed up\n${googleLine(guild)}`,
+            `${e.auto_stop ? ' · auto-stop **on**' : ''}\n${googleLine(guild)}`,
         })],
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
-          btn('ax:view_signups', '📋 View Sign-ups'),
           autostopBtn(e),
           btn('ax:stop', '⏸ Stop Sign-Ups', Style.PRIMARY),
           abortBtn(),
@@ -250,7 +249,6 @@ export function renderManagerPanel(
             btn('ax:validate', '✅ Validate'),
           ),
           row(
-            btn('ax:view_signups', '📋 View Sign-ups'),
             btn('ax:reopen', '↩ Reopen Sign-Ups'),
             btn('ax:reco_start', '🎯 Start Recommending', Style.SUCCESS),
             abortBtn(),
@@ -300,7 +298,6 @@ export function renderManagerPanel(
         components: [
           row(
             btn('ax:refresh', '🔄 Refresh'),
-            btn('ax:reco_view', '📊 View Status'),
             btn('ax:remind', '📣 Remind Now'),
             autostopBtn(e),
           ),

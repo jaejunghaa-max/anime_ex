@@ -618,14 +618,3 @@ async function milestoneRepaint(c: HCtx, e: EventRow): Promise<void> {
   if ((agg?.n ?? 1) === 0) await repaint(c);
   else await throttledCountRepaint(c, e.event_id);
 }
-
-/** Legacy: the pre-3.2 participant panel had a 🎯 My Status button. */
-export async function recoStatusMe(c: HCtx): Promise<Response> {
-  const ctx = await recoCtxOf(c);
-  if (ctx instanceof Response) return ctx;
-  const items = await getItems(c.env, ctx.e.event_id);
-  return respond.ephemeral({
-    ...statusPanel(ctx.e, ctx.me, ctx.giftee, items, ctx.gifteeRecos, ctx.myRecos),
-    content: 'Your thread has this panel too:',
-  });
-}

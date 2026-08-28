@@ -21,8 +21,7 @@ import { createSpreadsheet, isConnected, sheetUrl } from '../google';
 import { rewriteSheet, rewriteSheetFromDb, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
 import {
-  chunkLines, dealSizes, epochToZoned, isValidTz, now, parseReminderDays, randomHex, shuffled, ts,
-  zonedToEpoch,
+  dealSizes, epochToZoned, isValidTz, now, randomHex, shuffled, ts, zonedToEpoch,
 } from '../util';
 import { bg, HCtx, repaint, stale } from './common';
 
@@ -448,8 +447,7 @@ export async function openSignupsSubmit(c: HCtx): Promise<Response> {
       `📨 **Open sign-ups for ${e.topic}?**\n` +
       `• Deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
       `• The participant panel opens — announce it yourself however you like.\n` +
-      `• The spreadsheet is created in **${c.guild.google_email}**'s Drive.\n` +
-      `*The deadline and timezone above are already saved — **Not yet** just closes this, it does not undo them.*`,
+      `• The spreadsheet is created in **${c.guild.google_email}**'s Drive.`,
     components: [row(btn('ax:open:go', 'Confirm — open sign-ups', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
@@ -512,19 +510,6 @@ export async function discardGo(c: HCtx): Promise<Response> {
 }
 
 // ------------------------------------------------- SIGNUP_OPEN / MATCHING
-
-export async function viewSignups(c: HCtx): Promise<Response> {
-  const e = needState(c, 'SIGNUP_OPEN', 'MATCHING');
-  if (!e) return stale(c);
-  const n = await countSignups(c.env, e.event_id);
-  const recent = await c.env.DB
-    .prepare('SELECT display_name FROM signups WHERE event_id = ?1 ORDER BY signup_id DESC LIMIT 5')
-    .bind(e.event_id).all<{ display_name: string }>();
-  const names = recent.results.map((r) => r.display_name).join(', ') || '—';
-  return respond.ephemeral({
-    content: `📋 **${n}** signed up.\nMost recent: ${names}\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '*not created*'}`,
-  });
-}
 
 export async function stopSignups(c: HCtx): Promise<Response> {
   const e = needState(c, 'SIGNUP_OPEN');
@@ -784,8 +769,7 @@ export async function recoStartSubmit(c: HCtx): Promise<Response> {
       `• Validation runs first, then **assignments lock**: each of the **${n}** participants gets a private thread ` +
       `telling them who they're the Secret Santa of (with that person's MAL/AniList link), and picking begins. ` +
       `Everyone recommends up to the number their giftee asked for (1–3) and can send picks back **${e.max_declines}** time(s).\n` +
-      `You can still undo with **↩ Back to Matching** — but that wipes all picks.\n` +
-      `*The deadline and timezone above are already saved — **Not yet** just closes this, it does not undo them.*`,
+      `You can still undo with **↩ Back to Matching** — but that wipes all picks.`,
     components: [row(btn('ax:reco_start:go', '🎯 Confirm — start recommending', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
@@ -821,40 +805,6 @@ export async function recoStartGo(c: HCtx): Promise<Response> {
 }
 
 // ---------------------------------------------------------- RECOMMENDING
-
-/** [📊 View Status] — per-pair progress of the recommendation phase. */
-export async function recoView(c: HCtx): Promise<Response> {
-  const e = needState(c, 'RECOMMENDING', 'PREPARING');
-  if (!e) return stale(c);
-  const { all, loops, recos } = await loopContext(c.env, e.event_id);
-  const lines = all.map((s, idx) => {
-    const santa = all[loops.santa[idx]!]!;
-    const slots = recosOf(recos, s.signup_id);
-    const parts = activeRecos(slots).map((r) =>
-      r.status === 'FINAL' ? `✅ **${r.title}**` : `⏳ **${r.title}**`);
-    const body = parts.length ? parts.join(' · ') : `🎁 waiting on **${santa.display_name}**`;
-    return `<@${s.user_id}> (max ${s.max_recos}) — ${body}` +
-      (s.declines_used > 0 ? ` · declined ×${s.declines_used}` : '');
-  });
-  const withAnime = all.filter((s) => finalRecos(recosOf(recos, s.signup_id)).length > 0).length;
-  const chunks = chunkLines(lines.length ? lines : ['*no participants*'], 3900, 40);
-  const embeds: ReturnType<typeof embed>[] = [];
-  let used = 0;
-  let shown = 0;
-  for (const d of chunks) {
-    if (embeds.length >= 9 || used + d.length > 5200) break;
-    embeds.push(embed({ description: d }));
-    used += d.length;
-    shown += d.split('\n').length;
-  }
-  if (shown < lines.length) {
-    embeds.push(embed({ description: `…and **${lines.length - shown}** more — full detail in the sheet.` }));
-  }
-  return respond.ephemeral({
-    content: `📊 **${e.topic}** — ${withAnime}/${all.length} participants have an accepted anime.\nSheet: ${e.sheet_id ? sheetUrl(e.sheet_id) : '—'}`,
-    embeds,
-  });
-}
 
 /** [↩ Back to Matching] — destructive: wipes every pick/decline, keeps threads. */
 export async function backMatching(c: HCtx): Promise<Response> {
@@ -924,10 +874,6 @@ export async function launchModal(c: HCtx): Promise<Response> {
       max: 20, placeholder: '2026-10-01 21:00',
     }),
     modalText('tz', 'Timezone (IANA)', { value: e.tz ?? DEFAULT_TZ, max: 50, placeholder: DEFAULT_TZ }),
-    modalText('days', 'Reminder days before deadline', {
-      value: e.reminder_days || '7,3,1', max: 30, required: false,
-      description: 'Comma-separated, e.g. 7,3,1 — empty for none',
-    }),
     modalSelect('mirror', 'Also mirror reminders via DM?', [
       { label: 'No — thread pings only', value: '0', default: !e.dm_mirror },
       { label: 'Yes — best-effort DM copy', value: '1', default: !!e.dm_mirror },
@@ -947,28 +893,21 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
   if (deadline === null || deadline <= now()) {
     return respond.ephemeral({ content: '⚠ Review deadline must be `YYYY-MM-DD HH:mm` and in the future. Reopen **Launch** and try again.' });
   }
-  const days = parseReminderDays(f.get('days') ?? '');
-  if (days === null) {
-    return respond.ephemeral({ content: '⚠ Reminder days must be numbers 1–60, comma-separated (e.g. `7,3,1`) — or empty for none. Reopen **Launch**.' });
-  }
   const mirror = f.get('mirror') === '1' ? 1 : 0;
   // Stage on the event row; ax:launch:go freezes them (§5.4).
   await c.env.DB.prepare(
-    'UPDATE events SET review_deadline = ?1, tz = ?2, reminder_days = ?3, dm_mirror = ?4, updated_at = ?5 WHERE event_id = ?6',
-  ).bind(deadline, tz, days.join(','), mirror, now(), e.event_id).run();
+    'UPDATE events SET review_deadline = ?1, tz = ?2, dm_mirror = ?3, updated_at = ?4 WHERE event_id = ?5',
+  ).bind(deadline, tz, mirror, now(), e.event_id).run();
   const n = await countSignups(c.env, e.event_id);
   const agg = await peopleCounts(c, e.event_id);
   const pending = agg.pending;
   const waiting = agg.nothing;
-  const reminderLine = days.length
-    ? days.map((d) => `${d}d`).join(', ') + ' before the deadline'
-    : 'none';
   return respond.ephemeral({
     content:
       `🚀 **Launch ${e.topic}?**\n` +
       `• Participants: **${n}** · with an accepted anime: **${agg.accepted}** · picks accepted: **${agg.picks} / ${agg.wanted}**\n` +
       `• Review deadline: ${ts(deadline)} (${ts(deadline, 'R')})\n` +
-      `• Reminders: ${reminderLine}${mirror ? ' (+ DM mirror)' : ''}\n\n` +
+      `• Nudges: manual, via **📣 Remind Now**${mirror ? ' (+ DM mirror)' : ''}\n\n` +
       (waiting > 0
         ? `⚠ **${waiting} participant(s) have no anime yet** — the launch will refuse until every Santa has sent at least one pick.\n\n`
         : pending > 0
@@ -976,8 +915,7 @@ export async function launchSubmit(c: HCtx): Promise<Response> {
           : '') +
       `Launching creates one review doc per accepted anime (**${agg.picks}** of them) and posts the ` +
       `assignment into each existing thread (batched — ~${Math.ceil(agg.picks / c.cfg.jobBatch) + Math.ceil((n + agg.picks) / c.cfg.jobBatch)} min, ` +
-      `longer if other events are running). Forward-only.\n` +
-      `*The deadline, reminders and DM setting above are already saved — **Not yet** just closes this, it does not undo them.*`,
+      `longer if other events are running). Forward-only.`,
     components: [row(btn('ax:launch:go', '🚀 Confirm launch', Style.SUCCESS), btn('ax:cancel', 'Not yet'))],
   });
 }
@@ -1010,20 +948,9 @@ export async function launchGo(c: HCtx): Promise<Response> {
     await c.env.DB.prepare(
       "UPDATE recos SET status = 'FINAL', final_via = 'FORCED', updated_at = ?1 WHERE event_id = ?2 AND status = 'PENDING'",
     ).bind(now(), e.event_id).run();
-    // Freeze reminders (§10.1): rows per (day × participant), future only.
-    const days = parseReminderDays(e.reminder_days) ?? [];
+    // No scheduled reminder rows: nudging is the manager's call, via
+    // 📣 Remind Now, which enqueues 'manual' reminders on demand.
     const participants = await orderedSignups(c.env, e.event_id);
-    const stmts = [];
-    for (const d of days) {
-      const due = e.review_deadline! - d * 86400;
-      if (due <= now()) continue;
-      for (const p of participants) {
-        stmts.push(c.env.DB.prepare(
-          "INSERT INTO reminders (event_id, user_id, kind, due_at) VALUES (?1, ?2, 'review', ?3)",
-        ).bind(e.event_id, p.user_id, due));
-      }
-    }
-    if (stmts.length) await dbBatchChunked(c.env, stmts);
     await enqueueJob(c, e.event_id, 'launch');
     await repaint(c);
     await editOriginal(c.env, c.i.token, {

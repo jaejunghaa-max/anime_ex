@@ -2,9 +2,9 @@
 // close) and the RECOMMENDING interaction handlers.
 //
 // During the recommendation phase each participant's thread carries ONE
-// consolidated status panel (`statusPanel`) — their Santa mission, the picks
-// they've sent, the anime they've accepted, and their controls — edited in
-// place on every change. Individual pick cards are transient: they carry the
+// consolidated panel (`statusPanel`) — two numbered missions: who they
+// recommend for, and the picks waiting on their own reply — edited in place on
+// every change. Individual pick cards are transient: they carry the
 // Thank you!/Sorry buttons and disappear once answered.
 //
 // All pure state → payload functions; custom_ids carry the owner's user id
@@ -30,16 +30,29 @@ export const animeLabel = (r: Pick<RecoRow, 'title' | 'year'>): string =>
 const animeLine = (r: RecoRow): string =>
   `${r.type ?? '?'} · ${r.episodes ?? '?'} episodes${r.url ? ` · [MAL](${r.url})` : ''}`;
 
-const statusTag = (r: RecoRow): string =>
+const statusTag = (r: RecoRow, whose: 'theirs' | 'mine'): string =>
   r.status === 'DECLINED' ? 'declined 😞'
     : r.status === 'FINAL' ? 'approved 😊'
-    : 'waiting for their reply ⏳';
+    : whose === 'mine' ? 'waiting for your reply ⏳' : 'waiting for their reply ⏳';
+
+// Discord caps an embed description at 4096. The giftee's form answers are the
+// only unbounded part (free text, up to eight items), so when the panel would
+// overflow it is the answers that get trimmed — never the reader's own section.
+const PANEL_CAP = 4000;
+
+function fitPanel(head: string, answers: string | null, rest: string[]): string {
+  const assemble = (a: string | null) =>
+    [[head, a].filter(Boolean).join('\n'), ...rest].join('\n\n');
+  const full = assemble(answers);
+  if (full.length <= PANEL_CAP || !answers) return full;
+  const budget = answers.length - (full.length - PANEL_CAP);
+  return assemble(budget >= 40 ? truncate(answers, budget) : '• *(answers too long to show here — see the sheet)*');
+}
 
 /**
- * The one live panel in a participant's thread during PREPARING/RECOMMENDING:
- * the Santa mission in the first embed, the anime *they* were given in the
- * second, controls last. The split is deliberate — a single description caps
- * at 4096 characters, which eight free-text form answers can fill on their own.
+ * The one live panel in a participant's thread during PREPARING/RECOMMENDING.
+ * Two numbered missions in a single embed: who they recommend FOR, and the
+ * picks waiting on their own reply.
  */
 export function statusPanel(
   event: EventRow, me: SignupRow, giftee: SignupRow, items: FormItem[],
@@ -47,74 +60,55 @@ export function statusPanel(
 ): Record<string, unknown> {
   const isSelf = giftee.signup_id === me.signup_id;
   const sent = [...gifteeRecos].sort((a, b) => a.slot - b.slot);
+  const mine = [...myRecos].sort((a, b) => a.slot - b.slot);
   const approvedForThem = finalRecos(gifteeRecos).length;
   const left = picksLeft(giftee, gifteeRecos);
+  const declinesLeft = Math.max(0, event.max_declines - me.declines_used);
 
   // The deadline rides inside the mission sentence — no separate ⏰ line.
   const by = event.reco_deadline
     ? ` by ${ts(event.reco_deadline)} (${ts(event.reco_deadline, 'R')})`
     : '';
-  const missionLines = [
+
+  const missionHead = [
+    `**1. You are the Secret Santa of ${giftee.display_name}**`,
     event.theme ? `🎨 **Theme:** ${event.theme}` : null,
     `Study **${giftee.display_name}**'s (<@${giftee.user_id}>) taste. Recommend **at most ${giftee.max_recos}** anime they'll love` +
       `${event.theme ? ' — and that fit the theme' : ''}${by}.`,
     `• **list:** ${giftee.list_url || '—'}`,
-    visibleAnswerLines(giftee, items),
-    `🎯 **Your recommendations** (${approvedForThem} approved / ${giftee.max_recos} at most)`,
-    sent.length
-      ? sent.map((r) => `• ${animeLabel(r)} — ${statusTag(r)}`).join('\n')
-      : '*none sent yet*',
-    `*They don't know it's you — identities stay secret until the reveal.* 🤫`,
   ].filter((l) => l !== null).join('\n');
 
-  const myFinal = finalRecos(myRecos);
-  const myPending = pendingRecos(myRecos);
-  const mineLines = [
-    '🎁 **Anime you approved**',
-    myFinal.length
-      ? myFinal.map((r) => `• **${animeLabel(r)}** — ${animeLine(r)}`).join('\n')
-      : '*nothing accepted yet*',
-    myPending.length
-      ? `⏳ Waiting on your reply:\n${myPending.map((r) => `• **${animeLabel(r)}**`).join('\n')}`
-      : null,
-    `Sorry😞s left: **${Math.max(0, event.max_declines - me.declines_used)}**`,
-  ].filter(Boolean).join('\n');
+  const missionTail = [
+    `🎯 **Your recommendations** (${approvedForThem} approved / ${giftee.max_recos} at most)`,
+    sent.length
+      ? sent.map((r) => `• ${animeLabel(r)} — ${statusTag(r, 'theirs')}`).join('\n')
+      : '*none sent yet*',
+    `*They don't know it's you — identities stay secret until the reveal.* 🤫`,
+  ].join('\n');
+
+  const mineSection = [
+    '**2. Approve anime you want to review**',
+    `🎁 **Recommendations you got** (${declinesLeft} Sorry😞${declinesLeft === 1 ? '' : 's'} left)`,
+    mine.length
+      ? mine.map((r) => `• ${animeLabel(r)} — ${statusTag(r, 'mine')}`).join('\n')
+      : '*nothing yet — your Secret Santa is still choosing*',
+  ].join('\n');
 
   const buttons: unknown[] = [];
   if (!isSelf && left > 0) {
     buttons.push(btn(`ax:reco:${me.user_id}`, '🎯 Recommend an anime', Style.PRIMARY));
   }
-  if (myFinal.length > 0 && me.declines_used < event.max_declines) {
+  if (finalRecos(myRecos).length > 0 && me.declines_used < event.max_declines) {
     buttons.push(btn(`ax:reco_undo:${me.user_id}`, "I'll change my mind😞", Style.DANGER));
   }
 
-  // Accepting must be possible from the panel, not only from the pick card:
-  // cards are transient (deleted on answer, replaced on error, lost when a
-  // thread is pruned), and without this the panel could list a pick as
-  // "waiting for your reply" while offering no way to reply to it.
-  const acceptRow: unknown[] = myPending.slice(0, 5).map((r) =>
-    btn(
-      `ax:reco_ok:${me.user_id}:${r.reco_id}`,
-      myPending.length === 1 ? 'Thank you!😊' : `😊 ${truncate(animeLabel(r), 60)}`,
-      Style.SUCCESS,
-    ));
-
   return {
-    content: `<@${me.user_id}> your secret mission 🎯`,
-    embeds: [
-      // Two embeds, not one 4096-char description: form answers are free text
-      // and eight visible items can fill the cap on their own, which used to
-      // truncate away exactly the half about the reader.
-      embed({
-        title: `🎯 You are the Secret Santa of ${giftee.display_name}`,
-        description: missionLines,
-      }),
-      embed({ description: mineLines }),
-    ],
-    components: [
-      ...(buttons.length ? [row(...buttons)] : []),
-      ...(acceptRow.length ? [row(...acceptRow)] : []),
-    ],
+    content: `<@${me.user_id}> your missions 🎯`,
+    embeds: [embed({
+      title: '🎯 Your missions',
+      description: fitPanel(missionHead, visibleAnswerLines(giftee, items), [missionTail, mineSection]),
+    })],
+    components: buttons.length ? [row(...buttons)] : [],
   };
 }
 
@@ -187,8 +181,7 @@ export function assignmentHeader(
         title: '🎬 Your anime',
         description:
           `Below ${plural ? 'are' : 'is'} picked for you by your Secret Santa — *revealed at the end.*\n` +
-          `Watch the **full season**${plural ? ' of each' : ''}, then write your review${plural ? 's' : ''} ` +
-          `— **each anime has its own doc**.\n` +
+          `Watch the **full season**${plural ? ' of each' : ''}, then write your review${plural ? 's' : ''}.\n` +
           `*Don't share your review${plural ? 's' : ''} until the deadline.*`,
         fields: [{
           name: '⏰ Review deadline',
@@ -241,10 +234,10 @@ export function revealCard(
     embeds: [embed({
       title: '🎭 The reveal',
       description:
-        `Your Secret Santa was **${santa.display_name}** (<@${santa.user_id}>). ` +
+        `**${santa.display_name}** (<@${santa.user_id}>) was your Secret Santa. ` +
         `They picked the anime for you.\n` +
         `${mine.map((r) => `• **${animeLabel(r)}**`).join('\n') || '• —'}\n\n` +
-        `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) appreciated your pick${theirs.length > 1 ? 's' : ''}\n` +
+        `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) appreciated your pick${theirs.length > 1 ? 's' : ''}.\n` +
         `${theirs.map((r) => ratingLine(myGiftee, r)).join('\n') || '• —'}`,
     })],
   };
