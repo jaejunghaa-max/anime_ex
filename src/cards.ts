@@ -40,9 +40,13 @@ const statusTag = (r: RecoRow, whose: 'theirs' | 'mine'): string =>
 // overflow it is the answers that get trimmed — never the reader's own section.
 const PANEL_CAP = 4000;
 
+// One blank line, and only where the two numbered missions meet: `rest[0]`
+// continues section 1, everything after it starts a new section.
 function fitPanel(head: string, answers: string | null, rest: string[]): string {
-  const assemble = (a: string | null) =>
-    [[head, a].filter(Boolean).join('\n'), ...rest].join('\n\n');
+  const assemble = (a: string | null) => {
+    const [tail, ...sections] = rest;
+    return [[head, a, tail].filter(Boolean).join('\n'), ...sections].join('\n\n');
+  };
   const full = assemble(answers);
   if (full.length <= PANEL_CAP || !answers) return full;
   const budget = answers.length - (full.length - PANEL_CAP);
@@ -71,7 +75,7 @@ export function statusPanel(
     : '';
 
   const missionHead = [
-    `**1. You are the Secret Santa of ${giftee.display_name}**`,
+    `**1. Recommend anime to ${giftee.display_name}**`,
     event.theme ? `🎨 **Theme:** ${event.theme}` : null,
     `Study **${giftee.display_name}**'s (<@${giftee.user_id}>) taste. Recommend **at most ${giftee.max_recos}** anime they'll love` +
       `${event.theme ? ' — and that fit the theme' : ''}${by}.`,
@@ -88,10 +92,11 @@ export function statusPanel(
 
   const mineSection = [
     '**2. Approve anime you want to review**',
-    `🎁 **Recommendations you got** (${declinesLeft} Sorry😞${declinesLeft === 1 ? '' : 's'} left)`,
+    `🎁 **Recommendations you got** (${finalRecos(myRecos).length} approved / ${me.max_recos} at most)`,
     mine.length
       ? mine.map((r) => `• ${animeLabel(r)} — ${statusTag(r, 'mine')}`).join('\n')
       : '*nothing yet — your Secret Santa is still choosing*',
+    `**${declinesLeft}** Sorry😞${declinesLeft === 1 ? '' : 's'} left`,
   ].join('\n');
 
   const buttons: unknown[] = [];
@@ -172,10 +177,10 @@ export function assignmentHeader(
       embed({
         title: '🎁 Your pick',
         description:
-          `${theirs.map((r) => `• **${animeLabel(r)}**`).join('\n') || '• —'}\n` +
-          `**${myGiftee.display_name}** (<@${myGiftee.user_id}>) will be reviewing ` +
-          `${theirs.length > 1 ? 'them' : 'it'}.\n` +
-          `MAL/AniList: ${myGiftee.list_url || '—'}`,
+          `You are the Secret Santa of **${myGiftee.display_name}** (<@${myGiftee.user_id}>).\n` +
+          `They will watch the anime, and review ${theirs.length > 1 ? 'them' : 'it'}.\n` +
+          `MAL/AniList: ${myGiftee.list_url || '—'}\n` +
+          `${theirs.map((r) => `• **${animeLabel(r)}**`).join('\n') || '• —'}`,
       }),
       embed({
         title: '🎬 Your anime',

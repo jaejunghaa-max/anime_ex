@@ -296,7 +296,7 @@ export function renderManagerPanel(
             deadlineLine +
             `**${stats.recoAccepted} / ${stats.count}** participants accepted an anime · ` +
             `**${stats.picksAccepted} / ${stats.picksWanted}** picks accepted\n` +
-            `Everyone chose their own maximum (1–${MAX_PICKS} picks) and may send a pick back **${e.max_declines}** time(s); accepted picks stay changeable until Launch.\n` +
+            `Everyone chose their own maximum (1–${MAX_PICKS} picks) and may send a pick back **${e.max_declines}** time(s).\n` +
             statusLine +
             `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
         })],

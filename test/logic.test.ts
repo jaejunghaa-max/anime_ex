@@ -310,11 +310,15 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     expect(panel.embeds).toHaveLength(1);
     const d = panel.embeds[0]!.description;
     expect(panel.embeds[0]!.title).toBe('🎯 Your missions');
-    expect(d).toContain('**1. You are the Secret Santa of B**');
+    expect(d).toContain('**1. Recommend anime to B**');
     expect(d).toContain('**2. Approve anime you want to review**');
     expect(d).toContain('Recommendations you got');
-    // Sections are separated by a blank line.
+    // Exactly one blank line, and only where the two missions meet.
     expect(d).toContain('\n\n**2. Approve anime you want to review**');
+    expect(d.split('\n\n')).toHaveLength(2);
+    // No blank line between a section header and its first content line.
+    expect(d).toMatch(/\*\*1\. Recommend anime to B\*\*\n[^\n]/);
+    expect(d).toMatch(/\*\*2\. Approve anime you want to review\*\*\n🎁/);
   });
 
   it('bullets received picks with their status, declines included', () => {
@@ -327,8 +331,10 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     expect(d).toContain('• Sousou no Frieren (2020) — declined 😞');
     expect(d).toContain('• Kaiba (2020) — waiting for your reply ⏳');
     expect(d).toContain('• Dandadan (2020) — approved 😊');
-    // max_declines is 2 and none are spent yet.
-    expect(d).toContain('(2 Sorry😞s left)');
+    // The header counts approvals against the reader's own maximum…
+    expect(d).toContain('🎁 **Recommendations you got** (1 approved / 3 at most)');
+    // …and the budget closes the list rather than heading it.
+    expect(d.trimEnd().endsWith('**2** Sorry😞s left')).toBe(true);
   });
 
   it('trims the giftee answers, never the reader own section, when over the cap', () => {

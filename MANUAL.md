@@ -71,27 +71,27 @@ Santa of, with their info as a simple list:
 
 > **🎯 Your missions**
 >
-> **1. You are the Secret Santa of rabbit**
+> **1. Recommend anime to rabbit**
 > 🎨 **Theme:** Nostalgia
 > Study **rabbit**'s taste. Recommend **at most 3** anime they'll love — and
 > that fit the theme by {deadline}.
 > • **list:** https://myanimelist.net/profile/rabbit
 > • **favorite genre:** mecha
->
 > 🎯 **Your recommendations** (1 approved / 3 at most)
 > • Sousou no Frieren (2023) — declined 😞
 > • Kaiba (2008) — approved 😊
 > *They don't know it's you — identities stay secret until the reveal.* 🤫
 >
 > **2. Approve anime you want to review**
-> 🎁 **Recommendations you got** (1 Sorry😞 left)
+> 🎁 **Recommendations you got** (1 approved / 2 at most)
 > • Love Live! (2013) — approved 😊
 > • Dandadan (2024) — waiting for your reply ⏳
+> **1** Sorry😞 left
 >
 > `[🎯 Recommend an anime]` `[I'll change my mind😞]`
 
 Both missions live in the **same** panel — one embed, your whole status view,
-updating itself as things happen. You answer each pick on its own card, which
+updating itself as things happen. A single blank line divides the two. You answer each pick on its own card, which
 arrives in the thread as it is sent. (You never see how many declines *they*
 have left — pick with your heart.)
 
