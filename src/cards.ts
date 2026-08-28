@@ -40,13 +40,11 @@ const statusTag = (r: RecoRow, whose: 'theirs' | 'mine'): string =>
 // overflow it is the answers that get trimmed — never the reader's own section.
 const PANEL_CAP = 4000;
 
-// One blank line, and only where the two numbered missions meet: `rest[0]`
-// continues section 1, everything after it starts a new section.
+// A blank line before each block: the giftee's answers, then the picks sent to
+// them, then the reader's own section.
 function fitPanel(head: string, answers: string | null, rest: string[]): string {
-  const assemble = (a: string | null) => {
-    const [tail, ...sections] = rest;
-    return [[head, a, tail].filter(Boolean).join('\n'), ...sections].join('\n\n');
-  };
+  const assemble = (a: string | null) =>
+    [[head, a].filter(Boolean).join('\n'), ...rest].join('\n\n');
   const full = assemble(answers);
   if (full.length <= PANEL_CAP || !answers) return full;
   const budget = answers.length - (full.length - PANEL_CAP);

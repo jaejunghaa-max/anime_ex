@@ -77,6 +77,7 @@ Santa of, with their info as a simple list:
 > that fit the theme by {deadline}.
 > • **list:** https://myanimelist.net/profile/rabbit
 > • **favorite genre:** mecha
+>
 > 🎯 **Your recommendations** (1 approved / 3 at most)
 > • Sousou no Frieren (2023) — declined 😞
 > • Kaiba (2008) — approved 😊
@@ -91,7 +92,7 @@ Santa of, with their info as a simple list:
 > `[🎯 Recommend an anime]` `[I'll change my mind😞]`
 
 Both missions live in the **same** panel — one embed, your whole status view,
-updating itself as things happen. A single blank line divides the two. You answer each pick on its own card, which
+updating itself as things happen. You answer each pick on its own card, which
 arrives in the thread as it is sent. (You never see how many declines *they*
 have left — pick with your heart.)
 

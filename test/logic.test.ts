@@ -315,7 +315,7 @@ describe('thread cards (v6: one embed, one review doc per anime)', () => {
     expect(d).toContain('Recommendations you got');
     // Exactly one blank line, and only where the two missions meet.
     expect(d).toContain('\n\n**2. Approve anime you want to review**');
-    expect(d.split('\n\n')).toHaveLength(2);
+    expect(d.split('\n\n')).toHaveLength(3);
     // No blank line between a section header and its first content line.
     expect(d).toMatch(/\*\*1\. Recommend anime to B\*\*\n[^\n]/);
     expect(d).toMatch(/\*\*2\. Approve anime you want to review\*\*\n🎁/);
