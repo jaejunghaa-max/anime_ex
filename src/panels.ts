@@ -109,12 +109,23 @@ export async function panelStats(env: Env, event: EventRow | null): Promise<Pane
   };
 }
 
+/** The full status line — only the IDLE panel, where connecting is the task. */
 function googleLine(guild: GuildRow): string {
   return isConnected(guild)
     ? `✅ Google: connected as **${guild.google_email ?? 'unknown'}**`
     : guild.google_email
       ? `⚠️ Google: **disconnected** (was ${guild.google_email}) — reconnect before continuing`
       : '⚠️ Google: **not connected**';
+}
+
+/**
+ * Google status for a running event: silent while it works, because repeating
+ * "connected as …" on every panel is noise. It stays loud when the connection
+ * is broken — that is the one line explaining why a job has stalled or why
+ * Open Sign-Ups refuses.
+ */
+function googleWarning(guild: GuildRow): string {
+  return isConnected(guild) ? '' : `\n${googleLine(guild)}`;
 }
 
 function stallLine(job: JobRow | null): string {
@@ -195,8 +206,9 @@ export function renderManagerPanel(
           description:
             `**Session:** ${e.topic ?? '*not set*'}\n` +
             `**Theme:** ${e.theme ?? '*none*'}\n` +
-            `**Sorry😞 budget:** **${e.max_declines}** per person\n` +
-            `${googleLine(guild)}\n\n**Sign-up form**:\n${itemLines}\n\n` +
+            `**Sorry😞 budget:** **${e.max_declines}** per person` +
+            googleWarning(guild) +
+            `\n\n**Sign-up form**:\n${itemLines}\n\n` +
             `*The sign-up deadline and timezone are set when you press 📨 Open Sign-Ups.*`,
         })],
         components: [
@@ -223,7 +235,7 @@ export function renderManagerPanel(
             sheetTop(e) +
             `**${stats.count}** signed up\n` +
             `**Deadline:** ${ts(e.signup_deadline!)} (${ts(e.signup_deadline!, 'R')})` +
-            `${e.auto_stop ? ' · auto-stop **on**' : ''}\n${googleLine(guild)}`,
+            `${e.auto_stop ? ' · auto-stop **on**' : ''}` + googleWarning(guild),
         })],
         components: [row(
           btn('ax:refresh', '🔄 Refresh'),
@@ -245,7 +257,7 @@ export function renderManagerPanel(
           description:
             sheetTop(e) +
             `**${stats.count}** participants · **Loops:** ${loops} · ${validated}\n` +
-            `Flow: **1️⃣ Grouping** *(optional — only if you want several smaller loops)* → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).\n${googleLine(guild)}`,
+            `Flow: **1️⃣ Grouping** *(optional — only if you want several smaller loops)* → **2️⃣ Shuffle** (re-draw order within each loop) → hand-tune in the sheet (reorder rows / edit the Group column) → **✅ Validate** → **🎯 Start Recommending** (assignments lock — each row's Secret Santa is the next row in its loop).` + googleWarning(guild),
         })],
         components: [
           row(
@@ -298,7 +310,7 @@ export function renderManagerPanel(
             `**${stats.picksAccepted} / ${stats.picksWanted}** picks accepted\n` +
             `Everyone chose their own maximum (1–${MAX_PICKS} picks) and may send a pick back **${e.max_declines}** time(s).\n` +
             statusLine +
-            `\n${googleLine(guild)}` + stallLine(stats.activeJob) + abortingLine(stats),
+            googleWarning(guild) + stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [
           row(
@@ -347,7 +359,7 @@ export function renderManagerPanel(
             sheetTop(e) +
             `**Review deadline:** ${ts(e.review_deadline!)} (${ts(e.review_deadline!, 'R')})\n` +
             `**${stats.started} / ${stats.count}** participants started writing · ` +
-            `**${stats.reviewsStarted} / ${stats.docsTotal}** reviews are being written\n${sync}\n${googleLine(guild)}` +
+            `**${stats.reviewsStarted} / ${stats.docsTotal}** reviews are being written\n${sync}` + googleWarning(guild) +
             stallLine(stats.activeJob) + abortingLine(stats),
         })],
         components: [row(
