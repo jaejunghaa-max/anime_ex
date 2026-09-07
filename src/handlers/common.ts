@@ -62,18 +62,17 @@ export function stale(c: HCtx, msg = 'That action no longer applies — the even
 }
 
 /**
- * The gate is by role ID, not by role name — a role that merely *reads* like
- * the manager role does not open it. So name the exact role the bot recorded:
- * a mention resolves to the real thing, and a mismatch with the role the
- * clicker holds becomes obvious at a glance.
+ * Refusal for a manager control used from outside the manager channel. There
+ * is no manager role: seeing the channel is what grants the panel, so the fix
+ * is always a channel-permission edit rather than a role hunt.
  */
 export function managerOnly(guild: GuildRow): Response {
   return respond.ephemeral({
-    content: guild.manager_role_id
-      ? `🔒 Manager only — this needs the <@&${guild.manager_role_id}> role.\n` +
-        'If you hold a *different* role with a similar name, that is the problem: the bot matches ' +
-        'the exact role it created. An admin can run `/setup repair` to be given the right one.'
-      : '🔒 Manager only — no manager role is recorded for this server. An admin needs to run `/setup init`.',
+    content: guild.manager_channel_id
+      ? `🔒 Manager only — these controls work in <#${guild.manager_channel_id}>, and anyone who ` +
+        'can see that channel can use them. To add a manager, give them access to the channel ' +
+        '(Edit Channel → Permissions); to remove one, take it away.'
+      : '🔒 Manager only — this server has no manager channel yet. An admin needs to run `/setup init`.',
   });
 }
 

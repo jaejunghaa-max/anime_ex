@@ -34,13 +34,14 @@ if (!res.ok) {
 }
 console.log('✅ Registered /setup (init, repair).');
 
-// Bot install permissions (spec §3.1): Manage Roles, Manage Channels, Manage
-// Threads, Create Private Threads, Send Messages (+in Threads), Embed Links,
-// Read Message History, Manage Messages.
-// (Mention Everyone, bit 17, was dropped in v7.0 along with the @everyone
-// sign-up ping — asking for a permission the bot never uses costs trust at
-// install time.)
-const bits = [28n, 4n, 34n, 36n, 11n, 38n, 14n, 16n, 13n]
+// Bot install permissions (spec §3.1): Manage Channels, Manage Threads,
+// Create Private Threads, Send Messages (+in Threads), Embed Links, Read
+// Message History, Manage Messages.
+// Dropped as the bot stopped needing them: Mention Everyone (bit 17) in v7.0
+// with the @everyone sign-up ping, and Manage Roles (bit 28) in v7.1 with the
+// manager role — asking for a permission the bot never uses costs trust at
+// install time.
+const bits = [4n, 34n, 36n, 11n, 38n, 14n, 16n, 13n]
   .reduce((acc, b) => acc | (1n << b), 0n);
 console.log('\nInvite the bot with:');
 console.log(`https://discord.com/oauth2/authorize?client_id=${appId}&scope=bot%20applications.commands&permissions=${bits}`);

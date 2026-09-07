@@ -220,14 +220,6 @@ export function embed(e: {
 
 // ------------------------------------------------------- guild resources
 
-export function createRole(env: Env, guildId: string, name: string): Promise<{ id: string }> {
-  return dapi(env, 'POST', `/guilds/${guildId}/roles`, { name, permissions: '0', mentionable: false });
-}
-
-export function addMemberRole(env: Env, guildId: string, userId: string, roleId: string): Promise<void> {
-  return dapi(env, 'PUT', `/guilds/${guildId}/members/${userId}/roles/${roleId}`);
-}
-
 export interface Overwrite { id: string; type: 0 | 1; allow: string; deny: string }
 
 export function createChannel(
@@ -278,7 +270,19 @@ const P = {
 
 const sum = (...bits: bigint[]) => bits.reduce((a, b) => a | b, 0n).toString();
 
-export function managerChannelOverwrites(guildId: string, managerRoleId: string, botId: string): Overwrite[] {
+/**
+ * Who can see this channel is who can manage the event, so these overwrites
+ * only ever hide it from @everyone and let the bot post. Granting a person or
+ * a role access is the admin's call, made in Discord's own channel-permission
+ * UI — the bot neither creates nor requires a role of its own.
+ *
+ * `legacyRoleId` keeps the view grant for the "Exchange Manager" role that
+ * versions before v7.1 created, so re-running /setup on an existing server
+ * does not silently lock out the people who currently rely on it.
+ */
+export function managerChannelOverwrites(
+  guildId: string, botId: string, legacyRoleId: string | null,
+): Overwrite[] {
   return [
     {
       // @everyone: invisible AND explicitly unwritable — no messages, no
@@ -287,12 +291,12 @@ export function managerChannelOverwrites(guildId: string, managerRoleId: string,
       deny: sum(P.VIEW_CHANNEL, P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS,
         P.CREATE_PUBLIC_THREADS, P.CREATE_PRIVATE_THREADS, P.ADD_REACTIONS),
     },
-    {
-      id: managerRoleId, type: 0,
+    ...(legacyRoleId ? [{
+      id: legacyRoleId, type: 0 as const,
       allow: sum(P.VIEW_CHANNEL, P.READ_MESSAGE_HISTORY),
       deny: sum(P.SEND_MESSAGES, P.SEND_MESSAGES_IN_THREADS,
         P.CREATE_PUBLIC_THREADS, P.CREATE_PRIVATE_THREADS, P.ADD_REACTIONS),
-    },
+    }] : []),
     {
       id: botId, type: 1,
       allow: sum(P.VIEW_CHANNEL, P.SEND_MESSAGES, P.EMBED_LINKS, P.READ_MESSAGE_HISTORY, P.MANAGE_MESSAGES),

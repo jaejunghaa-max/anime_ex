@@ -4,7 +4,7 @@
 
 import type { Cfg, Env, EventRow, GuildRow, Interaction } from '../types';
 import {
-  addMemberRole, createChannel, createRole, dapi, DiscordApiError, editOriginal,
+  createChannel, dapi, DiscordApiError, editOriginal,
   managerChannelOverwrites, participantChannelOverwrites, respond,
 } from '../discord';
 import { panelStats, postAndPinPanel, renderManagerPanel, renderParticipantPanel } from '../panels';
@@ -63,7 +63,7 @@ export async function handleSetup(
   if (!isAdmin(i)) return respond.ephemeral({ content: '🔒 `/setup` needs the **Administrator** permission.' });
 
   ec.waitUntil(
-    doSetup(env, cfg, guildId, invoker, sub)
+    doSetup(env, cfg, guildId, sub)
       .then((summary) => editOriginal(env, i.token, { content: summary }))
       .catch(async (e: unknown) => {
         console.error('setup failed', e);
@@ -77,7 +77,7 @@ export async function handleSetup(
 }
 
 async function doSetup(
-  env: Env, cfg: Cfg, guildId: string, invoker: string, sub: 'init' | 'repair',
+  env: Env, cfg: Cfg, guildId: string, sub: 'init' | 'repair',
 ): Promise<string> {
   const botId = env.DISCORD_APP_ID;
   const existing = await env.DB.prepare('SELECT * FROM guilds WHERE guild_id = ?1')
@@ -95,38 +95,17 @@ async function doSetup(
     created_at: now(),
   };
 
-  // 1. Role — a visibility key only, no Discord permissions (§3.1).
-  let roleOk = false;
-  if (g.manager_role_id) {
-    const roles = await dapi<Array<{ id: string }>>(env, 'GET', `/guilds/${guildId}/roles`);
-    roleOk = roles.some((r) => r.id === g.manager_role_id);
-  }
-  if (!roleOk) {
-    const role = await createRole(env, guildId, 'Exchange Manager');
-    g.manager_role_id = role.id;
-    // Persist the id NOW, not at step 5. The permission gate matches this id
-    // exactly, so if anything below throws (a 403 creating channels is the
-    // usual one) the role would exist on the invoker while D1 still knew
-    // nothing about it — leaving a manager holding a role the bot rejects,
-    // and the next /setup creating yet another one.
-    await env.DB.prepare(
-      `INSERT INTO guilds (guild_id, manager_role_id, created_at) VALUES (?1, ?2, ?3)
-       ON CONFLICT(guild_id) DO UPDATE SET manager_role_id = excluded.manager_role_id`,
-    ).bind(guildId, role.id, g.created_at).run();
-    notes.push('Created the **Exchange Manager** role.');
-  }
-  // Always hand the stored role to whoever ran /setup, not just when it was
-  // just created — this is the self-service way out of "I have a manager role
-  // but the bot says I don't".
-  await addMemberRole(env, guildId, invoker, g.manager_role_id!).catch(() => {
-    notes.push('Could not assign the **Exchange Manager** role to you — move the bot’s own role above it in Server Settings → Roles, then run `/setup repair` again.');
-  });
+  // No manager role: access to the manager channel is the manager permission
+  // (see handlers/router.ts). A role the bot created and had to keep in sync
+  // was a second source of truth for the same question, and a manager who held
+  // a similarly named role of their own was simply refused. Servers set up
+  // before v7.1 keep their old role's view access — see managerChannelOverwrites.
 
   // 2 + 3. Channels.
   if (!g.manager_channel_id || !(await exists(env, `/channels/${g.manager_channel_id}`, notes))) {
     const ch = await createChannel(env, guildId, MANAGER_CHANNEL,
       'Anime Exchange — manager controls. Buttons on the pinned panel.',
-      managerChannelOverwrites(guildId, g.manager_role_id!, botId));
+      managerChannelOverwrites(guildId, botId, g.manager_role_id));
     g.manager_channel_id = ch.id;
     g.manager_msg_id = null;
     notes.push(`Created <#${ch.id}>.`);
@@ -134,7 +113,7 @@ async function doSetup(
     // Existing channel: re-apply the current permission set (read-only for
     // everyone — nobody can send), so perm changes land via /setup repair.
     await dapi(env, 'PATCH', `/channels/${g.manager_channel_id}`, {
-      permission_overwrites: managerChannelOverwrites(guildId, g.manager_role_id!, botId),
+      permission_overwrites: managerChannelOverwrites(guildId, botId, g.manager_role_id),
     }).catch((e) => console.error('manager channel perms patch failed', e));
   }
   if (!g.participant_channel_id || !(await exists(env, `/channels/${g.participant_channel_id}`, notes))) {
@@ -181,7 +160,9 @@ async function doSetup(
 
   const done = notes.length ? notes.map((n) => `• ${n}`).join('\n') : '• Everything already in place — panels re-verified.';
   return `✅ Setup ${sub === 'repair' ? 'repair ' : ''}complete:\n${done}\n\n` +
-    `Manager role: <@&${g.manager_role_id}> — the bot matches this exact role, so any similarly ` +
-    `named role you made yourself will not work.\n` +
+    `**Who can manage:** anyone who can see <#${g.manager_channel_id}>. It is hidden from ` +
+    `@everyone, so right now that is you and any other admin. Add a manager by giving them ` +
+    `access to that channel (Edit Channel → Permissions); remove one by taking it away. ` +
+    `There is no separate role to hand out.\n` +
     `Next: open <#${g.manager_channel_id}> and press **Connect Google**, then **New Event**.`;
 }

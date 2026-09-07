@@ -156,9 +156,10 @@ npm run deploy
 ### 4. Wire up Discord
 
 1. `DISCORD_TOKEN=... DISCORD_APP_ID=... npm run register` — registers
-   `/setup init` + `/setup repair` and prints the **invite URL** (Manage Roles,
-   Manage Channels, Manage Threads, Create Private Threads, Send Messages
+   `/setup init` + `/setup repair` and prints the **invite URL** (Manage
+   Channels, Manage Threads, Create Private Threads, Send Messages
    (+ in Threads), Embed Links, Read Message History, Manage Messages).
+   No Manage Roles — the bot creates no roles.
    The bot never pings @everyone — announcing an open sign-up is the
    manager's own call.
 2. In the app's **General Information**, set **Interactions Endpoint URL** to
@@ -166,9 +167,16 @@ npm run deploy
    must be live first).
 3. Invite the bot, then run **`/setup init`** in the server (Administrator only).
 
-`/setup init` creates the `Exchange Manager` role, the private
-`#anime-exchange-manager` channel, the read-only `#anime-exchange` channel, and
-pins one panel message in each. `/setup repair` re-creates anything missing.
+`/setup init` creates the private `#anime-exchange-manager` channel, the
+read-only `#anime-exchange` channel, and pins one panel message in each.
+`/setup repair` re-creates anything missing.
+
+**Who can manage:** whoever can see `#anime-exchange-manager`. The channel is
+hidden from @everyone, so that starts as the admins; add a manager by giving
+them access to the channel (Edit Channel → Permissions), remove one by taking
+it away. There is no bot-managed role — Discord will not deliver a button
+click from a channel a member cannot see, so channel access *is* the
+permission, checked against the signed `channel_id` on every interaction.
 
 ## Running an event
 

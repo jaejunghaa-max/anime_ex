@@ -52,6 +52,9 @@ export interface GuildRow {
   participant_channel_id: string | null;
   manager_msg_id: string | null;
   participant_msg_id: string | null;
+  /** Pre-v7.1 "Exchange Manager" role. No longer created or checked — access
+   *  to the manager channel is the permission — but kept so /setup does not
+   *  revoke the channel access existing servers still get through it. */
   manager_role_id: string | null;
   google_refresh_token_enc: string | null;
   google_email: string | null;

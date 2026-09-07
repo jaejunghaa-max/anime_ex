@@ -24,20 +24,19 @@ thread — nobody types commands except the one-time `/setup`.
 
 | Channel | Who sees it | What it's for |
 |---|---|---|
-| `#anime-exchange-manager` | Managers only (the **Exchange Manager** role) | The control panel — every event action is a button here |
+| `#anime-exchange-manager` | Anyone you give channel access to | The control panel — every event action is a button here |
 | `#anime-exchange` | Everyone | The sign-up panel, the reveal gallery, and each participant's **private thread** |
 
 Both channels are read-only; you interact by clicking buttons. Private threads
 under `#anime-exchange` are where each participant receives their Santa
 mission, their pick, reminders, and the reveal.
 
-> **The manager role is matched by identity, not by name.** `/setup` creates a
-> role called **Exchange Manager** and remembers *that* role. A role you create
-> yourself will not open the manager panel however you name it, even if the
-> name matches exactly. If a manager sees "🔒 Manager only", the message
-> mentions the role the bot expects — compare it with what they actually hold,
-> and have an admin run `/setup repair`, which assigns the right role to
-> whoever runs it.
+> **Being able to see `#anime-exchange-manager` is what makes someone a
+> manager.** There is no role to hand out: Discord will not deliver a button
+> click from a channel a member cannot see, so the channel's own permissions
+> are the permission. Add a manager in Edit Channel → Permissions → add the
+> member (or a role of your own); remove one the same way. The channel starts
+> hidden from @everyone, so at first only admins can use it.
 
 > **Privacy note:** members with the *Manage Threads* permission (admins/mods)
 > can technically open private threads. Missions and picks are hidden from
@@ -181,9 +180,10 @@ anime:
 
 ### One-time setup
 
-1. A server **Administrator** runs **`/setup init`**. The bot creates the
-   `Exchange Manager` role (assigned to you), both channels, and the two
-   pinned panels. Give the role to anyone who should co-manage.
+1. A server **Administrator** runs **`/setup init`**. The bot creates both
+   channels and the two pinned panels. `#anime-exchange-manager` is hidden
+   from @everyone; to let someone co-manage, give them access to that channel
+   in Edit Channel → Permissions. No role is involved.
 2. Press **🔗 Connect Google** and approve the consent screen. The event
    spreadsheet and all review docs are created **in that Google account's
    Drive** and stay yours forever. One Google account is connected per server;

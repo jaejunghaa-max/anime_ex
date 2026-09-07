@@ -59,8 +59,14 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
     return respond.ephemeral({ content: '⚙ Run `/setup init` first (needs Administrator).' });
   }
   const event = await getEventByGuild(env, i.guild_id);
+  // Access to the manager channel IS the manager permission. Discord will not
+  // deliver a component or modal interaction from a channel the user cannot
+  // see, and channel_id is set by Discord on the signed payload, so a click
+  // arriving from the manager channel proves the clicker can read it. Who may
+  // manage is therefore edited where it belongs — the channel's own
+  // permissions — with no bot-managed role to keep in sync.
   const isManager = isAdmin(i) ||
-    (guild.manager_role_id !== null && i.member.roles.includes(guild.manager_role_id));
+    (guild.manager_channel_id !== null && i.channel_id === guild.manager_channel_id);
 
   const c: HCtx = {
     env, cfg, ec, i, guild, event,
