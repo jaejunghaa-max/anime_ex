@@ -31,6 +31,14 @@ Both channels are read-only; you interact by clicking buttons. Private threads
 under `#anime-exchange` are where each participant receives their Santa
 mission, their pick, reminders, and the reveal.
 
+> **The manager role is matched by identity, not by name.** `/setup` creates a
+> role called **Exchange Manager** and remembers *that* role. A role you create
+> yourself will not open the manager panel however you name it, even if the
+> name matches exactly. If a manager sees "🔒 Manager only", the message
+> mentions the role the bot expects — compare it with what they actually hold,
+> and have an admin run `/setup repair`, which assigns the right role to
+> whoever runs it.
+
 > **Privacy note:** members with the *Manage Threads* permission (admins/mods)
 > can technically open private threads. Missions and picks are hidden from
 > ordinary members, not from moderators. (Buttons still refuse them — each

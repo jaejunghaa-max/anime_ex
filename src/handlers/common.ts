@@ -61,8 +61,20 @@ export function stale(c: HCtx, msg = 'That action no longer applies — the even
   return respond.ephemeral({ content: `↻ ${msg}` });
 }
 
-export function managerOnly(): Response {
-  return respond.ephemeral({ content: '🔒 Manager only — you need the **Exchange Manager** role.' });
+/**
+ * The gate is by role ID, not by role name — a role that merely *reads* like
+ * the manager role does not open it. So name the exact role the bot recorded:
+ * a mention resolves to the real thing, and a mismatch with the role the
+ * clicker holds becomes obvious at a glance.
+ */
+export function managerOnly(guild: GuildRow): Response {
+  return respond.ephemeral({
+    content: guild.manager_role_id
+      ? `🔒 Manager only — this needs the <@&${guild.manager_role_id}> role.\n` +
+        'If you hold a *different* role with a similar name, that is the problem: the bot matches ' +
+        'the exact role it created. An admin can run `/setup repair` to be given the right one.'
+      : '🔒 Manager only — no manager role is recorded for this server. An admin needs to run `/setup init`.',
+  });
 }
 
 /** Mark the participant-count panels dirty, repainting at most every 60 s (§5.3). */

@@ -70,7 +70,7 @@ async function dispatch(env: Env, cfg: Cfg, ec: ExecutionContext, i: Interaction
   };
 
   const participant = isModal ? PARTICIPANT_MODALS.has(action) : PARTICIPANT_ACTIONS.has(action);
-  if (!participant && !isManager) return managerOnly();
+  if (!participant && !isManager) return managerOnly(guild);
 
   if (isModal) {
     switch (action) {

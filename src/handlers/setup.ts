@@ -104,11 +104,23 @@ async function doSetup(
   if (!roleOk) {
     const role = await createRole(env, guildId, 'Exchange Manager');
     g.manager_role_id = role.id;
-    await addMemberRole(env, guildId, invoker, role.id).catch(() => {
-      notes.push('Could not assign the Exchange Manager role to you — move the bot’s role above it and assign manually.');
-    });
+    // Persist the id NOW, not at step 5. The permission gate matches this id
+    // exactly, so if anything below throws (a 403 creating channels is the
+    // usual one) the role would exist on the invoker while D1 still knew
+    // nothing about it — leaving a manager holding a role the bot rejects,
+    // and the next /setup creating yet another one.
+    await env.DB.prepare(
+      `INSERT INTO guilds (guild_id, manager_role_id, created_at) VALUES (?1, ?2, ?3)
+       ON CONFLICT(guild_id) DO UPDATE SET manager_role_id = excluded.manager_role_id`,
+    ).bind(guildId, role.id, g.created_at).run();
     notes.push('Created the **Exchange Manager** role.');
   }
+  // Always hand the stored role to whoever ran /setup, not just when it was
+  // just created — this is the self-service way out of "I have a manager role
+  // but the bot says I don't".
+  await addMemberRole(env, guildId, invoker, g.manager_role_id!).catch(() => {
+    notes.push('Could not assign the **Exchange Manager** role to you — move the bot’s own role above it in Server Settings → Roles, then run `/setup repair` again.');
+  });
 
   // 2 + 3. Channels.
   if (!g.manager_channel_id || !(await exists(env, `/channels/${g.manager_channel_id}`, notes))) {
@@ -168,5 +180,8 @@ async function doSetup(
     g.participant_msg_id, g.manager_role_id, g.created_at).run();
 
   const done = notes.length ? notes.map((n) => `• ${n}`).join('\n') : '• Everything already in place — panels re-verified.';
-  return `✅ Setup ${sub === 'repair' ? 'repair ' : ''}complete:\n${done}\n\nNext: open <#${g.manager_channel_id}> and press **Connect Google**, then **New Event**.`;
+  return `✅ Setup ${sub === 'repair' ? 'repair ' : ''}complete:\n${done}\n\n` +
+    `Manager role: <@&${g.manager_role_id}> — the bot matches this exact role, so any similarly ` +
+    `named role you made yourself will not work.\n` +
+    `Next: open <#${g.manager_channel_id}> and press **Connect Google**, then **New Event**.`;
 }
