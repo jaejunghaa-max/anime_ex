@@ -235,6 +235,16 @@ hand-tune → Validate → Start Recommending**:
    between loops. Each row's Secret Santa is the next row within its group's
    block — that person will pick *for* this row. The derived columns are never
    read back.
+
+   > **Move whole rows.** Click the row *number* to select the entire row,
+   > then drag. Dragging a selected block of cells moves only those columns
+   > and leaves the 🔑 User ID behind — the bot keys on that column, so the
+   > row has not actually moved as far as it is concerned. And close any
+   > **filter view** first (Data → Filter views → None): a filter view sorts
+   > only what *you* see and never moves the stored rows, which the bot is
+   > what reads. In both cases Validate succeeds and then rewrites the sheet
+   > in the order it read, so the reorder looks like it was undone. Validate
+   > prints the order it adopted — check it against what you arranged.
 4. **✅ Validate** — reconciles the sheet with the bot: checks for edited
    IDs, duplicates, and removed rows (with a removal/restore flow), parses the
    Group column (blank = 1), **blocks** any 1-person group, **warns** on

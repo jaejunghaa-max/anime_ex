@@ -7,6 +7,7 @@
 
 import type { Env, EventRow, FormItem, GuildRow, SignupRow } from './types';
 import { dbBatchChunked, orderedSignups } from './db';
+import { sheetSortWarning } from './google';
 import { layoutOf, readSheetRows, rewriteSheet } from './sheet';
 import { loopsPhrase, now } from './util';
 
@@ -20,6 +21,9 @@ export interface ValidateResult {
   notes: string[];
   /** Signed-up users whose row vanished from the sheet → removal/restore flow. */
   missing: Array<{ userId: string; name: string }>;
+  /** Display names in the order actually adopted, so the manager can see at a
+   *  glance whether it matches the order they arranged. */
+  order: string[];
 }
 
 export interface GroupParse {
@@ -71,6 +75,12 @@ export async function runValidate(
   const missing: Array<{ userId: string; name: string }> = [];
 
   const rows = await readSheetRows(env, guild, event, items);
+  // `values.get` reads the stored order; a filter view shows a different one.
+  if (event.sheet_id && event.sheet_gid !== null) {
+    const sortWarning = await sheetSortWarning(env, guild, event.sheet_id, event.sheet_gid)
+      .catch(() => null);
+    if (sortWarning) warnings.push(sortWarning);
+  }
   const groupColIdx = layoutOf(items).groupCol - 1;
   const seen = new Set<string>();
   const valid: Array<{ signup: SignupRow; sheetRow: number; groupRaw: string }> = [];
@@ -137,7 +147,7 @@ export async function runValidate(
     notes.push(`Group numbers were normalized to 1..${new Set(parse.normalized).size} in order of first appearance.`);
   }
 
-  if (errors.length > 0) return { ok: false, n, sizes: [], errors, warnings, notes, missing };
+  if (errors.length > 0) return { ok: false, n, sizes: [], errors, warnings, notes, missing, order: [] };
 
   // Normalize (§5.4 step 4): stable-sort into contiguous group blocks —
   // within-group relative order preserved, blocks in normalized group order.
@@ -168,7 +178,10 @@ export async function runValidate(
   const fresh = canonical.map(({ signup, group }, i) => ({ ...signup, row_order: i, group_no: group }));
   await rewriteSheet(env, guild, event, items, fresh);
 
-  return { ok: true, n, sizes, errors, warnings, notes, missing };
+  return {
+    ok: true, n, sizes, errors, warnings, notes, missing,
+    order: fresh.map((s) => s.display_name),
+  };
 }
 
 /**
@@ -202,7 +215,17 @@ export function validateReport(r: ValidateResult): string {
     const loops = r.sizes.length <= 1
       ? 'single loop · Santa column = next-row rule ✔'
       : `${loopsPhrase(r.sizes)} · Santa = next row within each group ✔`;
-    return [`✅ **${r.n}** participants · ${loops}`, ...extras].join('\n');
+    // Spell out the order that was adopted. "✅ validated" alone gave the
+    // manager no way to tell that the bot had read a different order than the
+    // one they arranged — the sheet just appeared to snap back.
+    const shown = r.order.slice(0, 12).join(' → ');
+    const orderLine = r.order.length
+      ? `**Order adopted:** ${shown}${r.order.length > 12 ? ` → …(+${r.order.length - 12})` : ''}\n` +
+        '*Not what you arranged? The bot reads the sheet\'s stored row order — drag whole rows ' +
+        '(click the row number first), and close any filter view before reordering.*'
+      : '';
+    return [`✅ **${r.n}** participants · ${loops}`, orderLine, ...extras]
+      .filter(Boolean).join('\n');
   }
   return [`❌ Validation failed:`, ...r.errors.map((e) => `• ${e}`), ...extras].join('\n');
 }

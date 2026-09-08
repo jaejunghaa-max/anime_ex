@@ -10,7 +10,7 @@ import {
 } from '../src/sheet';
 import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
 import { animeCard, assignmentHeader, revealCard, statusPanel } from '../src/cards';
-import { parseGroupCells } from '../src/validate';
+import { parseGroupCells, validateReport } from '../src/validate';
 import { modalFields } from '../src/types';
 import type { EventRow, FormItem, RecoRow, SignupRow } from '../src/types';
 
@@ -525,5 +525,39 @@ describe('sheet grid width (Sheets rejects a range starting past the last column
   it('is wider than Google\'s 26-column default, which the layout overruns', () => {
     expect(layoutOf(widest, MAX_PICKS).lastCol).toBeGreaterThan(26);
     expect(SHEET_COLUMNS).toBeGreaterThan(26);
+  });
+});
+
+describe('the validate report shows what order was adopted', () => {
+  const base = { ok: true as const, n: 3, sizes: [3], errors: [], warnings: [], notes: [], missing: [] };
+
+  it('spells out the adopted order, so a mismatch is visible', () => {
+    const out = validateReport({ ...base, order: ['A', 'B', 'C'] });
+    expect(out).toContain('✅ **3** participants');
+    expect(out).toContain('**Order adopted:** A → B → C');
+  });
+
+  it('truncates a long order rather than flooding the reply', () => {
+    const many = Array.from({ length: 20 }, (_, i) => `P${i + 1}`);
+    const out = validateReport({ ...base, n: 20, sizes: [20], order: many });
+    expect(out).toContain('P1 → P2');
+    expect(out).toContain('(+8)');
+    expect(out).not.toContain('P13');
+  });
+
+  it('surfaces a filter-view warning alongside the success line', () => {
+    const out = validateReport({
+      ...base, order: ['A', 'B', 'C'], warnings: ['This tab has a **filter view**.'],
+    });
+    expect(out).toContain('✅ **3** participants');
+    expect(out).toContain('⚠ This tab has a **filter view**.');
+  });
+
+  it('says nothing about order when validation failed', () => {
+    const out = validateReport({
+      ok: false, n: 0, sizes: [], errors: ['boom'], warnings: [], notes: [], missing: [], order: [],
+    });
+    expect(out).toContain('❌ Validation failed');
+    expect(out).not.toContain('Order adopted');
   });
 });

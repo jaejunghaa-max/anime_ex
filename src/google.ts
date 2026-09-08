@@ -298,6 +298,41 @@ export async function valuesGet(
   return res.values ?? [];
 }
 
+/**
+ * Does this tab carry a sort that only exists for the viewer?
+ *
+ * `values.get` returns the UNDERLYING row order. A **filter view** (Data →
+ * Filter views) sorts for one person and never moves the stored rows, so a
+ * manager who reorders that way sees one order while the bot reads another —
+ * Validate then "succeeds" and rewrites the sheet in the order it actually
+ * read, which looks exactly like the reorder being undone. A basic filter with
+ * sortSpecs is reported too, since it is just as invisible after the fact.
+ */
+export async function sheetSortWarning(
+  env: Env, guild: GuildRow, spreadsheetId: string, gid: number,
+): Promise<string | null> {
+  const meta = await gapi<{
+    sheets?: Array<{
+      properties: { sheetId: number };
+      filterViews?: Array<{ sortSpecs?: unknown[] }>;
+      basicFilter?: { sortSpecs?: unknown[] };
+    }>;
+  }>(env, guild, 'GET',
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId),filterViews(sortSpecs),basicFilter(sortSpecs))`);
+  const sheet = meta.sheets?.find((x) => x.properties.sheetId === gid) ?? meta.sheets?.[0];
+  if (!sheet) return null;
+  if (sheet.filterViews?.length) {
+    return 'This tab has a **filter view**. A filter view sorts what *you* see without moving the ' +
+      'stored rows, and the bot reads the stored order — so reordering inside one has no effect. ' +
+      'Close the filter view (Data → Filter views → None) and reorder the rows themselves.';
+  }
+  if (sheet.basicFilter?.sortSpecs?.length) {
+    return 'This tab has a **filter with a sort** on it. Remove the filter (Data → Remove filter) ' +
+      'before reordering, so what you see is the order the bot reads.';
+  }
+  return null;
+}
+
 /** Header notes: "immutable key — do not edit" on User ID, derived-columns warning (§8.3). */
 export function addHeaderNotes(
   env: Env, guild: GuildRow, spreadsheetId: string, gid: number,
