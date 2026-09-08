@@ -18,14 +18,13 @@ import { LINK_DESC_DEFAULT, LINK_LABEL_DEFAULT } from './signup';
 import { createSpreadsheet, driveDelete, isConnected, sheetUrl } from '../google';
 // Sheet writes before the recommendation phase carry no slots (none exist
 // yet); anything after it goes through rewriteSheetFromDb.
-import { rewriteSheet, rewriteSheetFromDb, writeHeader } from '../sheet';
+import { MAX_ITEMS, SHEET_COLUMNS, rewriteSheet, rewriteSheetFromDb, writeHeader } from '../sheet';
 import { adoptSignupOrder, runValidate, validateReport } from '../validate';
 import {
   dealSizes, epochToZoned, isValidTz, now, randomHex, shuffled, ts, zonedToEpoch,
 } from '../util';
 import { bg, HCtx, repaint, stale } from './common';
 
-const MAX_ITEMS = 8; // 2 modals × 5 fields − picks select − list link
 // Pre-filled in the Set Basics / Launch timezone fields (still editable).
 const DEFAULT_TZ = 'America/Chicago';
 
@@ -467,7 +466,7 @@ export async function openSignupsGo(c: HCtx): Promise<Response> {
     let sheetGid = e.sheet_gid;
     if (!sheetId) {
       const title = `Anime Exchange — ${e.topic} — ${epochToZoned(now(), fresh.tz!).slice(0, 10)}`;
-      const created = await createSpreadsheet(c.env, c.guild, title);
+      const created = await createSpreadsheet(c.env, c.guild, title, SHEET_COLUMNS);
       sheetId = created.spreadsheetId;
       sheetGid = created.gid;
       await c.env.DB.prepare('UPDATE events SET sheet_id = ?1, sheet_gid = ?2, updated_at = ?3 WHERE event_id = ?4')

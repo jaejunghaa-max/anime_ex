@@ -229,14 +229,37 @@ export function sheetUrl(spreadsheetId: string): string {
 export const SHEET_TAB = 'Sign-Ups';
 
 export async function createSpreadsheet(
-  env: Env, guild: GuildRow, title: string,
+  env: Env, guild: GuildRow, title: string, columns: number,
 ): Promise<{ spreadsheetId: string; gid: number }> {
   const res = await gapi<{ spreadsheetId: string; sheets: Array<{ properties: { sheetId: number } }> }>(
     env, guild, 'POST', 'https://sheets.googleapis.com/v4/spreadsheets', {
       properties: { title: truncate(title, 200) },
-      sheets: [{ properties: { title: SHEET_TAB, gridProperties: { frozenRowCount: 1 } } }],
+      // Size the grid for the widest layout the bot can produce plus the sweep
+      // margin past it. Google's default is 26 columns, which the largest
+      // layout fills exactly — and Sheets rejects a range starting past the
+      // last column outright (a range that merely overlaps the grid is clamped
+      // instead), so the cleanup pass would 400 on every write.
+      sheets: [{ properties: { title: SHEET_TAB, gridProperties: { frozenRowCount: 1, columnCount: columns } } }],
     });
   return { spreadsheetId: res.spreadsheetId, gid: res.sheets[0]?.properties.sheetId ?? 0 };
+}
+
+/** Grow a sheet's grid to at least `columns` wide. No-op if it already is —
+ *  never shrinks, so a manager who added columns by hand keeps them. */
+export async function ensureGridWidth(
+  env: Env, guild: GuildRow, spreadsheetId: string, gid: number, columns: number,
+): Promise<void> {
+  const meta = await gapi<{
+    sheets?: Array<{ properties: { sheetId: number; gridProperties?: { columnCount?: number } } }>;
+  }>(env, guild, 'GET',
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,gridProperties(columnCount)))`);
+  const sheet = meta.sheets?.find((x) => x.properties.sheetId === gid) ?? meta.sheets?.[0];
+  const have = sheet?.properties.gridProperties?.columnCount ?? 0;
+  if (have === 0 || have >= columns) return;
+  await gapi(env, guild, 'POST',
+    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, {
+      requests: [{ appendDimension: { sheetId: gid, dimension: 'COLUMNS', length: columns - have } }],
+    });
 }
 
 function enc(range: string): string {

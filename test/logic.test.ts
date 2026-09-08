@@ -5,8 +5,8 @@ import {
 } from '../src/util';
 import { dice, fromMalOfficial, normalizeQuery, rankCandidates, type AnimeCandidate } from '../src/mal';
 import {
-  a1, colLetter, declinesLeftCell, headerRow, layoutOf, recoCell, recoStatusCell, sheetSlots,
-  slotCol,
+  a1, colLetter, declinesLeftCell, headerRow, layoutOf, MAX_ITEMS, MAX_PICKS, recoCell,
+  recoStatusCell, SHEET_COLUMNS, sheetSlots, slotCol,
 } from '../src/sheet';
 import { activeRecos, declinedRecos, finalRecos, pendingRecos, picksLeft } from '../src/db';
 import { animeCard, assignmentHeader, revealCard, statusPanel } from '../src/cards';
@@ -503,5 +503,27 @@ describe('the Sorry😞s-left column (the decline count has no other home)', () 
     expect(declinesLeftCell({ declines_used: 0 }, { max_declines: 2 })).toBe(2);
     expect(declinesLeftCell({ declines_used: 2 }, { max_declines: 2 })).toBe(0);
     expect(declinesLeftCell({ declines_used: 5 }, { max_declines: 2 })).toBe(0);
+  });
+});
+
+describe('sheet grid width (Sheets rejects a range starting past the last column)', () => {
+  const widest: FormItem[] = Array.from({ length: MAX_ITEMS }, (_, i) => ({
+    item_id: i + 1, event_id: 1, position: i + 1, label: `Q${i + 1}`,
+    type: 'FIB', description: null, options_json: null, visible_to_recommender: 1,
+  }));
+
+  it('covers the widest layout AND the sweep that reaches past it', () => {
+    const layout = layoutOf(widest, MAX_PICKS);
+    // The data block must fit…
+    expect(layout.lastCol).toBeLessThanOrEqual(SHEET_COLUMNS);
+    // …and so must the trailing-column sweep, which starts at lastCol + 1.
+    // A range that merely overlaps the grid is clamped by Sheets; one that
+    // starts beyond it is a hard 400, which used to break every sheet write.
+    expect(layout.lastCol + 12).toBeLessThanOrEqual(SHEET_COLUMNS);
+  });
+
+  it('is wider than Google\'s 26-column default, which the layout overruns', () => {
+    expect(layoutOf(widest, MAX_PICKS).lastCol).toBeGreaterThan(26);
+    expect(SHEET_COLUMNS).toBeGreaterThan(26);
   });
 });

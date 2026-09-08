@@ -7,7 +7,8 @@
 
 import type { Env, EventRow, FormItem, GuildRow, RecoRow, SignupRow } from './types';
 import {
-  SHEET_TAB, addHeaderNotes, valuesBatchUpdate, valuesClear, valuesGet, valuesUpdate,
+  GoogleApiError, SHEET_TAB, addHeaderNotes, ensureGridWidth, valuesBatchUpdate, valuesClear,
+  valuesGet, valuesUpdate,
 } from './google';
 import {
   activeRecos, answersOf, getItems, loadRecos, orderedSignups, recosOf, type RecoMap,
@@ -57,6 +58,18 @@ const PER_RECO = 5;
 
 /** Hard cap on how many anime one participant may ask for (v6). */
 export const MAX_PICKS = 3;
+
+/** Custom form items an event may have: 2 modals × 5 fields, minus the picks
+ *  select and the built-in list link. Also the widest the item block can get. */
+export const MAX_ITEMS = 8;
+
+/** How many columns the data tab needs: the widest layout the bot can produce
+ *  (every item, every slot), plus the margin the post-write sweep reaches past
+ *  it. Google's default grid is 26 columns — one column narrower than the
+ *  widest layout — and Sheets rejects a range that STARTS past the last column
+ *  outright, while clamping one that merely overlaps. So an under-sized grid
+ *  makes the sweep 400 on every write. */
+export const SHEET_COLUMNS = FIXED + MAX_ITEMS + 3 + MAX_PICKS * PER_RECO + 12;
 
 /** How many recommendation column-groups the sheet needs: the largest
  *  "picks I want" among the participants (each may choose their own). */
@@ -214,9 +227,29 @@ export async function rewriteSheet(
   await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${end}${ordered.length + 1}`), values);
   // Rows below the block (a participant withdrew) and columns past it (someone
   // lowered their pick count, shrinking the per-slot block).
-  await valuesClear(env, guild, event.sheet_id, a1(`A${ordered.length + 2}:${colLetter(layout.lastCol + 12)}1000`));
-  await valuesClear(env, guild, event.sheet_id,
+  await sweep(env, guild, event, a1(`A${ordered.length + 2}:${colLetter(layout.lastCol + 12)}1000`));
+  await sweep(env, guild, event,
     a1(`${colLetter(layout.lastCol + 1)}1:${colLetter(layout.lastCol + 12)}${ordered.length + 1}`));
+}
+
+/**
+ * Clear a leftover region. On a sheet created before the grid was sized for
+ * the widest layout, the range past the block can start beyond the last
+ * column, which Sheets rejects outright — so treat that 400 as what it is (the
+ * grid is too narrow), widen it, and sweep again. The data itself is already
+ * written by this point; a sweep that still fails leaves stale cells, never
+ * wrong ones.
+ */
+async function sweep(env: Env, guild: GuildRow, event: EventRow, range: string): Promise<void> {
+  try {
+    await valuesClear(env, guild, event.sheet_id!, range);
+  } catch (e) {
+    const narrow = e instanceof GoogleApiError && e.status === 400 && /grid limits/i.test(e.message);
+    if (!narrow || event.sheet_gid === null) throw e;
+    await ensureGridWidth(env, guild, event.sheet_id!, event.sheet_gid, SHEET_COLUMNS);
+    await valuesClear(env, guild, event.sheet_id!, range)
+      .catch((err) => console.error(`sheet sweep still failing after widening: ${range}`, err));
+  }
 }
 
 /**
@@ -263,6 +296,12 @@ export async function writeHeader(
 ): Promise<void> {
   if (!event.sheet_id) return;
   const header = headerRow(items, 1);
+  if (event.sheet_gid !== null) {
+    // Once per event, before anything is written: a sheet from an older
+    // deployment is narrower than the layout now needs.
+    await ensureGridWidth(env, guild, event.sheet_id, event.sheet_gid, SHEET_COLUMNS)
+      .catch((e) => console.error('sheet widen failed (sweeps will retry)', e));
+  }
   await valuesUpdate(env, guild, event.sheet_id, a1(`A1:${colLetter(header.length)}1`), [header]);
   if (event.sheet_gid !== null) {
     const layout = layoutOf(items, 1);
