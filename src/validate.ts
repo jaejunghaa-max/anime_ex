@@ -80,7 +80,12 @@ export async function runValidate(
     if (!userId && row.every((c) => !(c ?? '').toString().trim())) continue; // blank line
     const rowNo = i + 2;
     if (!/^\d{5,20}$/.test(userId)) {
-      errors.push(`Row ${rowNo}: User ID column is not a valid Discord id (\`${userId || 'empty'}\`) — the 🔑 column must not be edited.`);
+      // An empty key with other cells still filled is almost always a row left
+      // behind by cut-and-paste, not someone editing the key column — say so,
+      // because the fix (delete the leftover row) is different.
+      errors.push(userId
+        ? `Row ${rowNo}: User ID column is not a valid Discord id (\`${userId}\`) — the 🔑 column must not be edited.`
+        : `Row ${rowNo}: no User ID, but the row is not empty — if you moved rows by cut-and-paste, delete the leftover row (right-click → Delete row) rather than just clearing it.`);
       continue;
     }
     if (seen.has(userId)) {
